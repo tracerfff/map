@@ -1,11 +1,10 @@
-# Update: single-file web map with (1) only Day1 first point as the trip start flag,
-# (2) prettier custom checkboxes, and (3) desaturate/dim segments & labels when checked.
+# Create a clean single-file HTML with no stray header text/comments.
 html = r"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>川甘环线（重制·美化勾选&降饱和）</title>
+<title>川甘环线（纯净版·起点D1·美化勾选·降饱和）</title>
 <link
   rel="stylesheet"
   href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
@@ -43,7 +42,7 @@ html = r"""<!DOCTYPE html>
   .leaflet-div-icon { background: transparent !important; border: 0 !important; }
   .flag { font-size: 20px; line-height: 20px; transform: translate(0,-18px); }
 
-  /* Pretty checkbox */
+  /* 美化复选框 */
   .segchk { appearance: none; -webkit-appearance: none; width: 16px; height: 16px;
             border-radius: 4px; border: 2px solid rgba(255,255,255,0.9); outline: none;
             display: inline-block; position: relative; cursor: pointer; background: rgba(255,255,255,0.25); }
@@ -55,7 +54,7 @@ html = r"""<!DOCTYPE html>
   .segchk:checked { background: rgba(0,0,0,0.3); }
   .segchk:checked::after { opacity: 1; transform: scale(1); }
 
-  /* Dimmed style helper */
+  /* 勾选后降饱和 */
   .dimmed { filter: saturate(35%) brightness(0.95); opacity: 0.5; }
 </style>
 </head>
@@ -100,7 +99,7 @@ function rgba(hex, a=0.92){
   return `rgba(${r},${g},${b},${a})`;
 }
 
-// Points & route
+// 路线点位
 const points = [
   ["成都",30.658,104.064,"D1",500],
   ["松潘",32.6386,103.5975,"D1",2850],
@@ -171,7 +170,7 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 18, attribution: '&copy; OpenStreetMap'
 }).addTo(map);
 
-// total / remaining
+// 顶部统计
 document.getElementById('total_km').textContent = totalKm;
 document.getElementById('remain_km').textContent = totalKm;
 function recalcRemaining(){
@@ -182,9 +181,9 @@ function recalcRemaining(){
   document.getElementById('remain_km').textContent = Math.max(0, totalKm-checked);
 }
 
-// draw segments & labels; keep references for dimming
+// 画线 & 标签；保留引用以便降饱和
 const polyRefs = [];
-const labelRefs = []; // store marker elements' DOM nodes for dimming
+const labelRefs = [];
 
 segments.forEach((seg, idx)=>{
   const color = dayColors[seg.day] || '#333';
@@ -209,7 +208,7 @@ segments.forEach((seg, idx)=>{
   labelRefs[idx] = marker;
 });
 
-// points + labels
+// 点位 + 常显标签（D# 名称｜海拔m）
 points.forEach(([name,lat,lon,day,elev])=>{
   const color = dayColors[day] || '#333';
   const fg = (luminance(color)>160 ? "#000" : "#fff");
@@ -221,9 +220,9 @@ points.forEach(([name,lat,lon,day,elev])=>{
   L.marker([lat,lon], {icon: L.divIcon({className:'', html:tagHtml})}).addTo(map);
 });
 
-// Only show a START flag at Day1's first point
+// 起点：仅 D1 的第一个地点（成都）加旗帜
 (function(){
-  const startName = points.find(p => p[3]==="D1")[0]; // first D1 entry
+  const startName = points.find(p => p[3]==="D1")[0];
   const p = pt[startName];
   if(p){
     const flagHtml = `<div class="flag" title="起点（D1）">🚩</div>`;
@@ -231,14 +230,14 @@ points.forEach(([name,lat,lon,day,elev])=>{
   }
 })();
 
-// checkbox logic: dim polyline & its label when checked
+// 勾选后：线条 & 标签降饱和 + 剩余里程更新
 document.addEventListener('change', e=>{
   if(e.target && e.target.classList.contains('segchk')){
     const id = e.target.id.replace('segcb_','');
     const poly = polyRefs[id];
     const labelMarker = labelRefs[id];
     if(poly){
-      const layerEl = poly._path; // SVG path element
+      const layerEl = poly._path;
       if(layerEl){
         if(e.target.checked){
           layerEl.style.filter = "saturate(35%) brightness(0.95)";
@@ -266,7 +265,7 @@ document.addEventListener('change', e=>{
 </body>
 </html>
 """
-out = "/mnt/data/川甘环线-重制版-起点仅D1-美化勾选-降饱和.html"
-with open(out, "w", encoding="utf-8") as f:
+path = "/mnt/data/川甘环线-纯净版-起点D1-美化勾选-降饱和.html"
+with open(path, "w", encoding="utf-8") as f:
     f.write(html)
-out
+path
