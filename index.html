@@ -1,23 +1,25 @@
-# Create an updated single-file HTML with:
-# - Point name labels use the same per-day route color background
-# - Simple anti-overlap (auto-offset labels in a spiral if too close to existing labels)
-# - Sequential checkboxes: must follow route order; only next becomes enabled; unchecking locks and clears later ones
-# - Persistence with localStorage: checked segments are saved and restored after refresh
-
+# Build a "clean & final" single-file HTML:
+# - No stray header text
+# - Point-name labels use EXACT same style as route labels (same font & colored background)
+# - Strong background coloring with !important to beat any external CSS
+# - Sequential checkboxes + persistence + desaturation on checked
+# - Anti-overlap for point labels
 html = r"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>川甘环线（顺序勾选·持久化·防遮挡）</title>
-<link
-  rel="stylesheet"
-  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-  integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
-  crossorigin=""
-/>
+<title>川甘环线（统一底色与字体 · 顺序勾选 · 持久化 · 防遮挡）</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
 <style>
-  html, body, #map { height: 100%; margin: 0; }
+  :root {
+    --chip-radius: 10px;
+    --chip-shadow: 0 2px 6px rgba(0,0,0,0.18);
+    --chip-font: 12px;
+    --chip-weight: 800;
+    --sysfont: system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans","Liberation Sans",sans-serif;
+  }
+  html, body, #map { height: 100%; margin: 0; font-family: var(--sysfont); }
   .legend {
     position: absolute; right: 10px; top: 10px; z-index: 1001;
     background: rgba(255,255,255,0.95); padding: 8px 10px; border:1px solid #999; border-radius:10px;
@@ -30,31 +32,29 @@ html = r"""<!DOCTYPE html>
     background: rgba(255,255,255,0.95); padding: 10px 14px; border: 1px solid #999; border-radius: 10px;
     font-size: 13px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);
   }
-  .tag-box, .seg-label {
-    border-radius: 10px !important;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.18) !important;
+  /* 统一用 .chip 作为“路线标签 + 地名标签”的底层样式 */
+  .chip {
+    border-radius: var(--chip-radius) !important;
+    box-shadow: var(--chip-shadow) !important;
+    border: 1px solid rgba(0,0,0,0.35) !important;
     -webkit-backface-visibility: hidden;
     transform: translateZ(0);
-    border: 1px solid rgba(0,0,0,0.35) !important;
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 6px 10px;
+    font-size: var(--chip-font); font-weight: var(--chip-weight);
+    line-height: 1; white-space: nowrap;
+    font-family: var(--sysfont);
   }
-  .tag-box { 
-    padding: 2px 8px; font-size: 11px; font-weight: 700; white-space: nowrap;
-  }
-  .seg-label {
-    padding: 6px 10px; font-size: 11px; font-weight: 800; white-space: nowrap;
-    display: inline-flex; gap: 8px; align-items: center;
-  }
+  /* 地名标签专用（稍小一点点） */
+  .chip--point { padding: 4px 8px; }
   .leaflet-div-icon { background: transparent !important; border: 0 !important; }
   .flag { font-size: 20px; line-height: 20px; transform: translate(0,-18px); }
-  /* 美化复选框 */
+  /* 漂亮的勾选框 */
   .segchk { appearance: none; -webkit-appearance: none; width: 16px; height: 16px;
             border-radius: 4px; border: 2px solid rgba(255,255,255,0.9); outline: none;
             display: inline-block; position: relative; cursor: pointer; background: rgba(255,255,255,0.25); }
-  .segchk::after {
-    content: "✓"; position: absolute; top: -2px; left: 2px; font-size: 14px; color: #fff;
-    opacity: 0; transform: scale(0.5);
-    transition: all .15s ease;
-  }
+  .segchk::after { content: "✓"; position: absolute; top: -2px; left: 2px; font-size: 14px; color: #fff;
+    opacity: 0; transform: scale(0.5); transition: all .15s ease; }
   .segchk:checked { background: rgba(0,0,0,0.3); }
   .segchk:checked::after { opacity: 1; transform: scale(1); }
   /* 勾选后降饱和 */
@@ -67,7 +67,7 @@ html = r"""<!DOCTYPE html>
 <div class="overlay">
   <div style="font-weight:800;font-size:14px;">总里程：<span id="total_km">--</span> km</div>
   <div style="margin-top:6px;font-weight:700;">剩余里程：<span id="remain_km">--</span> km</div>
-  <div style="margin-top:4px;font-size:12px;color:#666;">按路线顺序勾选；刷新后自动恢复上次进度</div>
+  <div style="margin-top:4px;font-size:12px;color:#666;">按顺序勾选；刷新后自动恢复上次进度</div>
 </div>
 
 <div class="legend">
@@ -82,22 +82,17 @@ html = r"""<!DOCTYPE html>
   <div class="row"><span class="swatch" style="background:#7f7f7f"></span> D8</div>
 </div>
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-  integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script>
 const dayColors = {
   D1:"#d62728", D2:"#1f77b4", D3:"#2ca02c", D4:"#ff7f0e",
   D5:"#9467bd", D6:"#8c564b", D7:"#e377c2", D8:"#7f7f7f"
 };
-function luminance(hex){
-  const c = hex.replace('#',''); const r=parseInt(c.slice(0,2),16), g=parseInt(c.slice(2,4),16), b=parseInt(c.slice(4,6),16);
-  return 0.299*r+0.587*g+0.114*b;
-}
+function luminance(hex){ const c = hex.replace('#',''); const r=parseInt(c.slice(0,2),16), g=parseInt(c.slice(2,4),16), b=parseInt(c.slice(4,6),16);
+  return 0.299*r+0.587*g+0.114*b; }
 function textColor(hex){ return luminance(hex)>160 ? "#000" : "#fff"; }
-function rgba(hex, a=0.92){
-  const c = hex.replace('#',''); const r=parseInt(c.slice(0,2),16), g=parseInt(c.slice(2,4),16), b=parseInt(c.slice(4,6),16);
-  return `rgba(${r},${g},${b},${a})`;
-}
+function rgba(hex, a=0.92){ const c = hex.replace('#',''); const r=parseInt(c.slice(0,2),16), g=parseInt(c.slice(2,4),16), b=parseInt(c.slice(4,6),16);
+  return `rgba(${r},${g},${b},${a})`; }
 
 // Points & route
 const points = [
@@ -141,16 +136,12 @@ const order = [
 
 const pt = {}; points.forEach(([n,lat,lon,day,elev])=>pt[n]={lat,lon,day,elev});
 
-function haversineKm(lat1,lon1,lat2,lon2){
-  const R=6371; const dLat=(lat2-lat1)*Math.PI/180, dLon=(lon2-lon1)*Math.PI/180;
+function haversineKm(lat1,lon1,lat2,lon2){ const R=6371; const dLat=(lat2-lat1)*Math.PI/180, dLon=(lon2-lon1)*Math.PI/180;
   const a=Math.sin(dLat/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
-  return 2*R*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
-}
+  return 2*R*Math.atan2(Math.sqrt(a),Math.sqrt(1-a)); }
 function roadKm(lat1,lon1,lat2,lon2){ return haversineKm(lat1,lon1,lat2,lon2)*1.35; }
-function baselineTimeStr(km, elev1, elev2){
-  const speed = Math.max(elev1,elev2)>=2500 ? 45 : 60;
-  const m = Math.round((km/speed)*60); return `${Math.floor(m/60)}h${(m%60).toString().padStart(2,'0')}m`;
-}
+function baselineTimeStr(km, elev1, elev2){ const speed = Math.max(elev1,elev2)>=2500 ? 45 : 60;
+  const m = Math.round((km/speed)*60); return `${Math.floor(m/60)}h${(m%60).toString().padStart(2,'0')}m`; }
 
 const segments=[];
 let totalKm=0;
@@ -171,44 +162,27 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 }).addTo(map);
 
 // 顶部统计
-function setTotals(total, remain){
-  document.getElementById('total_km').textContent = total;
-  document.getElementById('remain_km').textContent = remain;
-}
+function setTotals(total, remain){ document.getElementById('total_km').textContent = total; document.getElementById('remain_km').textContent = remain; }
 setTotals(totalKm, totalKm);
 
-// =========== Anti-overlap helpers (simple spiral offsets) ===========
-const placed = []; // store projected screen positions to avoid overlap
-function willOverlap(ptA, threshold=22){ // px
-  for(const p of placed){
-    const dx=ptA.x - p.x, dy=ptA.y - p.y;
-    if(Math.sqrt(dx*dx+dy*dy) < threshold) return true;
-  }
+// Anti-overlap helpers
+const placed = [];
+function willOverlap(ptA, threshold=22){
+  for(const p of placed){ const dx=ptA.x - p.x, dy=ptA.y - p.y; if(Math.sqrt(dx*dx+dy*dy) < threshold) return true; }
   return false;
 }
-function spiralOffsets(n=20, step=0.0008){
-  // returns a series of lat/lon delta offsets in a small spiral
-  const arr=[];
-  for(let i=0;i<n;i++){
-    const ang = i*0.9;
-    const r = (i+1)*step;
-    arr.push([Math.sin(ang)*r, Math.cos(ang)*r]);
-  }
-  return arr;
-}
-const OFFSETS = spiralOffsets(30, 0.001);
+function spiralOffsets(n=24, step=0.001){ const arr=[]; for(let i=0;i<n;i++){ const ang=i*0.9, r=(i+1)*step; arr.push([Math.sin(ang)*r, Math.cos(ang)*r]); } return arr; }
+const OFFSETS = spiralOffsets(28, 0.001);
 
-// 画线 & 标签；保留引用以便降饱和、顺序控制
+// Draw segments & labels, keep refs
 const polyRefs = [];
-const labelRefs = []; // label markers
-const checkRefs = []; // checkbox inputs
-const midPoints = []; // for potential future anti-overlap on segment labels
+const labelRefs = [];
+const checkRefs = [];
 
 segments.forEach((seg, idx)=>{
   const color = dayColors[seg.day] || '#333';
   const fg = (luminance(color)>160 ? "#000" : "#fff");
   const bg = rgba(color, 0.92);
-
   const line = L.polyline([[seg.A.lat,seg.A.lon],[seg.B.lat,seg.B.lon]], {color, weight:5, opacity:0.95})
     .addTo(map)
     .bindTooltip("高德导航（点击打开）", {sticky:true});
@@ -216,132 +190,76 @@ segments.forEach((seg, idx)=>{
   polyRefs[idx] = line;
 
   const mid = [(seg.A.lat+seg.B.lat)/2,(seg.A.lon+seg.B.lon)/2];
-  midPoints.push(mid);
-  const html = `
-    <div class="seg-label" id="seglabel_${idx}" style="background:${bg} !important;color:${fg} !important;border-color:${color} !important;">
+  const html = `<div class="chip" id="seglabel_${idx}" style="background:${bg} !important;color:${fg} !important;border-color:${color} !important;">
       <input type="checkbox" class="segchk" id="segcb_${idx}" data-idx="${idx}" data-dist="${seg.dist}" />
-      <label for="segcb_${idx}" style="margin:0;cursor:pointer;">
-        ${seg.day} · ${seg.from} → ${seg.to} · ${seg.dist} km · ${seg.timeStr}
-      </label>
+      <label for="segcb_${idx}" style="margin:0;cursor:pointer;">${seg.day} · ${seg.from} → ${seg.to} · ${seg.dist} km · ${seg.timeStr}</label>
     </div>`;
   const marker = L.marker(mid, {icon: L.divIcon({className:'', html})}).addTo(map);
   labelRefs[idx] = marker;
-
-  // store checkbox for sequential control
-  setTimeout(()=>{ // wait DOM creation
-    const el = document.getElementById(`segcb_${idx}`);
-    if(el) checkRefs[idx]=el;
-  }, 0);
+  setTimeout(()=>{ const el = document.getElementById(`segcb_${idx}`); if(el) checkRefs[idx]=el; }, 0);
 });
 
-// 点位 + 常显标签（与路线同色底）+ 防遮挡偏移
+// Point labels with SAME look as route labels; anti-overlap
 function addPointLabel(name, lat, lon, day, elev){
   const color = dayColors[day] || '#333';
   const fg = (luminance(color)>160 ? "#000" : "#fff");
   const bg = rgba(color, 0.90);
   L.circleMarker([lat,lon], {radius:4, weight:2, color, fillColor: color, fillOpacity:1}).addTo(map);
 
-  // try offsets to avoid overlap in screen space
-  let finalLat=lat, finalLon=lon;
-  let found=false;
-  for(const [dlat, dlon] of OFFSETS){
+  let finalLat=lat, finalLon=lon, placedPt=null;
+  for(const [dlat,dlon] of OFFSETS){
     const testLat = lat + dlat, testLon = lon + dlon;
     const ptScreen = map.latLngToLayerPoint([testLat, testLon]);
-    if(!willOverlap(ptScreen)){
-      finalLat=testLat; finalLon=testLon;
-      placed.push(ptScreen);
-      found=true; break;
-    }
+    if(!willOverlap(ptScreen)){ finalLat=testLat; finalLon=testLon; placedPt=ptScreen; break; }
   }
-  if(!found){
-    placed.push(map.latLngToLayerPoint([finalLat, finalLon]));
-  }
+  if(!placedPt) placedPt = map.latLngToLayerPoint([finalLat, finalLon]);
+  placed.push(placedPt);
 
-  const tagHtml = `<div class="tag-box" style="background:${bg} !important;color:${fg} !important;border-color:${color} !important;">
+  const tagHtml = `<div class="chip chip--point" style="background:${bg} !important;color:${fg} !important;border-color:${color} !important;">
     ${day} ${name}｜${elev} m
   </div>`;
   L.marker([finalLat,finalLon], {icon: L.divIcon({className:'', html:tagHtml})}).addTo(map);
 }
 
-// 初次添加点位标签（需要在地图渲染后拿到屏幕点）
 map.whenReady(()=>{
   points.forEach(([name,lat,lon,day,elev])=> addPointLabel(name,lat,lon,day,elev));
-  // 起点旗帜：D1 第一个点
   const startName = points.find(p => p[3]==="D1")[0];
   const p = pt[startName];
-  if(p){
-    const flagHtml = `<div class="flag" title="起点（D1）">🚩</div>`;
-    L.marker([p.lat, p.lon], {icon: L.divIcon({className:'', html:flagHtml})}).addTo(map);
-  }
+  if(p){ const flagHtml = `<div class="flag" title="起点（D1）">🚩</div>`; L.marker([p.lat, p.lon], {icon: L.divIcon({className:'', html:flagHtml})}).addTo(map); }
 });
 
-// =========== 顺序勾选 & 持久化（localStorage） ===========
-const STORAGE_KEY = "chuan_gan_route_checked_indices_v1";
+// 顺序勾选 + 持久化
+const STORAGE_KEY = "chuan_gan_route_checked_indices_v2";
+function persistState(){ const arr = checkRefs.map((el)=> el && el.checked ? 1 : 0); localStorage.setItem(STORAGE_KEY, JSON.stringify(arr)); }
+function loadState(){ try{ const raw=localStorage.getItem(STORAGE_KEY); if(!raw) return null; const arr=JSON.parse(raw); return Array.isArray(arr)?arr.map(v=>v?1:0):null; }catch(e){ return null; } }
 
-function persistState(){
-  const arr = checkRefs.map((el, i)=> el && el.checked ? 1 : 0);
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(arr));
-}
-function loadState(){
-  try{
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if(!raw) return null;
-    const arr = JSON.parse(raw);
-    if(!Array.isArray(arr)) return null;
-    return arr.map(v=> v?1:0);
-  }catch(e){ return null; }
-}
-
-// sequential enabling logic
 function applySequentialRules(){
-  // disable all first
-  checkRefs.forEach(el=>{ if(el){ el.disabled = true; }});
-  // find the first unchecked index; enable it（以及之前的保持可读、不可改顺序回退）
+  checkRefs.forEach(el=>{ if(el) el.disabled=true; });
   let firstUnchecked = checkRefs.findIndex(el=> el && !el.checked);
   if(firstUnchecked === -1) firstUnchecked = checkRefs.length-1;
-  // enable exactly one: the first unchecked
-  if(checkRefs[firstUnchecked]) checkRefs[firstUnchecked].disabled = false;
+  if(checkRefs[firstUnchecked]) checkRefs[firstUnchecked].disabled=false;
 }
-
 function updateVisualsFromChecks(){
-  // Set remaining
-  let checkedDist = 0;
-  checkRefs.forEach((el, i)=>{
+  let checkedDist=0;
+  checkRefs.forEach((el,i)=>{
     if(!el) return;
     const dist = parseInt(el.getAttribute('data-dist')||'0',10);
     const poly = polyRefs[i];
     const labelMarker = labelRefs[i];
-    if(el.checked){
-      checkedDist += dist;
-      // dim visuals
-      if(poly && poly._path){ poly._path.style.filter="saturate(35%) brightness(0.95)"; poly._path.style.opacity="0.45"; }
-      if(labelMarker){
-        const nd = labelMarker.getElement();
-        if(nd) nd.classList.add('dimmed');
-      }
-    }else{
-      if(poly && poly._path){ poly._path.style.filter=""; poly._path.style.opacity="0.95"; }
-      if(labelMarker){
-        const nd = labelMarker.getElement();
-        if(nd) nd.classList.remove('dimmed');
-      }
-    }
+    if(el.checked){ checkedDist += dist; if(poly&&poly._path){ poly._path.style.filter="saturate(35%) brightness(0.95)"; poly._path.style.opacity="0.45"; }
+      if(labelMarker){ const nd=labelMarker.getElement(); if(nd) nd.classList.add('dimmed'); } }
+    else { if(poly&&poly._path){ poly._path.style.filter=""; poly._path.style.opacity="0.95"; }
+      if(labelMarker){ const nd=labelMarker.getElement(); if(nd) nd.classList.remove('dimmed'); } }
   });
-  setTotals(totalKm, Math.max(0, totalKm-checkedDist));
+  setTotals(totalKm, Math.max(0,totalKm-checkedDist));
 }
-
-// Restore state (in-order)
 function restoreFromStorage(){
   const arr = loadState();
-  if(!arr) { applySequentialRules(); updateVisualsFromChecks(); return; }
-  // enforce order: only allow continuous leading 1s
-  let lastIndex = -1;
+  if(!arr){ applySequentialRules(); updateVisualsFromChecks(); return; }
+  let last=-1;
   for(let i=0;i<arr.length;i++){
     if(arr[i]===1){
-      if(i===lastIndex+1){
-        if(checkRefs[i]) checkRefs[i].checked = true;
-        lastIndex = i;
-      }else{ break; }
+      if(i===last+1){ if(checkRefs[i]) checkRefs[i].checked=true; last=i; } else { break; }
     }else{ break; }
   }
   applySequentialRules();
@@ -352,17 +270,12 @@ document.addEventListener('change', e=>{
   if(e.target && e.target.classList.contains('segchk')){
     const idx = parseInt(e.target.getAttribute('data-idx'),10);
     if(Number.isFinite(idx)){
-      // block out-of-order checks
       const prev = idx-1;
       if(prev>=0 && (!checkRefs[prev] || !checkRefs[prev].checked)){
-        e.target.checked = false; // revert
-        return;
+        e.target.checked=false; return;
       }
-      // If unchecking an already checked one, also clear all after it
       if(!e.target.checked){
-        for(let j=idx+1;j<checkRefs.length;j++){
-          if(checkRefs[j]) checkRefs[j].checked = false;
-        }
+        for(let j=idx+1;j<checkRefs.length;j++){ if(checkRefs[j]) checkRefs[j].checked=false; }
       }
       applySequentialRules();
       updateVisualsFromChecks();
@@ -371,18 +284,12 @@ document.addEventListener('change', e=>{
   }
 });
 
-// initial state after DOM settle
-window.addEventListener('load', ()=>{
-  // ensure references are set
-  setTimeout(()=>{
-    restoreFromStorage();
-  }, 100);
-});
+window.addEventListener('load', ()=>{ setTimeout(restoreFromStorage, 100); });
 </script>
 </body>
 </html>
 """
-path = "/mnt/data/川甘环线-顺序勾选-持久化-防遮挡.html"
+path = "/mnt/data/川甘环线-统一底色字体-顺序持久化-防遮挡-纯净版.html"
 with open(path, "w", encoding="utf-8") as f:
     f.write(html)
 path
