@@ -1,9 +1,13 @@
-
+# Produce a clean HTML where: 
+# - segments must be completed in order
+# - clicking a checked checkbox toggles it OFF (allowed); when toggled off, later segments are cleared & locked
+# - style: unified chip for labels; day-colored; anti-overlap; persist with localStorage
+html = r"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>川甘环线（顺序可取消·持久化·统一底色字体）</title>
+<title>川甘环线（顺序勾选·可取消切换·持久化）</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
 <style>
   :root { --chip-radius: 10px; --chip-shadow: 0 2px 6px rgba(0,0,0,0.18); --chip-font: 12px; --chip-weight: 800;
@@ -32,7 +36,7 @@
 <div class="overlay">
   <div style="font-weight:800;font-size:14px;">总里程：<span id="total_km">--</span> km</div>
   <div style="margin-top:6px;font-weight:700;">剩余里程：<span id="remain_km">--</span> km</div>
-  <div style="margin-top:4px;font-size:12px;color:#666;">按顺序勾选；已勾选可取消；刷新后自动恢复进度</div>
+  <div style="margin-top:4px;font-size:12px;color:#666;">按顺序勾选；再次勾选可取消并清空其后的进度；刷新后自动恢复</div>
 </div>
 <div class="legend">
   <div style="font-weight:700;margin-bottom:4px;">D1–D8 图例</div>
@@ -142,7 +146,7 @@ map.whenReady(()=>{
   if(p){ const flagHtml=`<div class="flag" title="起点（D1）">🚩</div>`; L.marker([p.lat,p.lon],{icon:L.divIcon({className:'',html:flagHtml})}).addTo(map); }
 });
 
-const STORAGE_KEY="chuan_gan_route_checked_indices_v4";
+const STORAGE_KEY="chuan_gan_route_checked_indices_v5";
 function persistState(){ const arr=checkRefs.map(el=> el&&el.checked?1:0); localStorage.setItem(STORAGE_KEY,JSON.stringify(arr)); }
 function loadState(){ try{ const raw=localStorage.getItem(STORAGE_KEY); if(!raw) return null; const arr=JSON.parse(raw); return Array.isArray(arr)?arr.map(v=>v?1:0):null; }catch(e){ return null; } }
 
@@ -203,7 +207,7 @@ window.addEventListener('load', ()=>{ setTimeout(restoreFromStorage, 120); });
 </body>
 </html>
 """
-path = "/mnt/data/川甘环线-顺序可取消-统一底色纯净版.html"
+path = "/mnt/data/川甘环线-顺序可取消-再次勾选可取消-纯净版.html"
 with open(path, "w", encoding="utf-8") as f:
     f.write(html)
 path
