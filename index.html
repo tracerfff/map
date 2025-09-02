@@ -1,10 +1,15 @@
-# Create a clean single-file HTML with no stray header text/comments.
+# Create an updated single-file HTML with:
+# - Point name labels use the same per-day route color background
+# - Simple anti-overlap (auto-offset labels in a spiral if too close to existing labels)
+# - Sequential checkboxes: must follow route order; only next becomes enabled; unchecking locks and clears later ones
+# - Persistence with localStorage: checked segments are saved and restored after refresh
+
 html = r"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>川甘环线（纯净版·起点D1·美化勾选·降饱和）</title>
+<title>川甘环线（顺序勾选·持久化·防遮挡）</title>
 <link
   rel="stylesheet"
   href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
@@ -41,7 +46,6 @@ html = r"""<!DOCTYPE html>
   }
   .leaflet-div-icon { background: transparent !important; border: 0 !important; }
   .flag { font-size: 20px; line-height: 20px; transform: translate(0,-18px); }
-
   /* 美化复选框 */
   .segchk { appearance: none; -webkit-appearance: none; width: 16px; height: 16px;
             border-radius: 4px; border: 2px solid rgba(255,255,255,0.9); outline: none;
@@ -53,7 +57,6 @@ html = r"""<!DOCTYPE html>
   }
   .segchk:checked { background: rgba(0,0,0,0.3); }
   .segchk:checked::after { opacity: 1; transform: scale(1); }
-
   /* 勾选后降饱和 */
   .dimmed { filter: saturate(35%) brightness(0.95); opacity: 0.5; }
 </style>
@@ -64,7 +67,7 @@ html = r"""<!DOCTYPE html>
 <div class="overlay">
   <div style="font-weight:800;font-size:14px;">总里程：<span id="total_km">--</span> km</div>
   <div style="margin-top:6px;font-weight:700;">剩余里程：<span id="remain_km">--</span> km</div>
-  <div style="margin-top:4px;font-size:12px;color:#666;">勾选已完成的路段，自动扣减剩余里程；勾选后该段会降饱和度</div>
+  <div style="margin-top:4px;font-size:12px;color:#666;">按路线顺序勾选；刷新后自动恢复上次进度</div>
 </div>
 
 <div class="legend">
@@ -79,11 +82,8 @@ html = r"""<!DOCTYPE html>
   <div class="row"><span class="swatch" style="background:#7f7f7f"></span> D8</div>
 </div>
 
-<script
-  src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-  integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
-  crossorigin="">
-</script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script>
 const dayColors = {
   D1:"#d62728", D2:"#1f77b4", D3:"#2ca02c", D4:"#ff7f0e",
@@ -99,7 +99,7 @@ function rgba(hex, a=0.92){
   return `rgba(${r},${g},${b},${a})`;
 }
 
-// 路线点位
+// Points & route
 const points = [
   ["成都",30.658,104.064,"D1",500],
   ["松潘",32.6386,103.5975,"D1",2850],
@@ -171,19 +171,38 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 }).addTo(map);
 
 // 顶部统计
-document.getElementById('total_km').textContent = totalKm;
-document.getElementById('remain_km').textContent = totalKm;
-function recalcRemaining(){
-  let checked=0;
-  document.querySelectorAll('.segchk').forEach(chk=>{
-    if(chk.checked){ checked += parseInt(chk.dataset.dist||'0',10); }
-  });
-  document.getElementById('remain_km').textContent = Math.max(0, totalKm-checked);
+function setTotals(total, remain){
+  document.getElementById('total_km').textContent = total;
+  document.getElementById('remain_km').textContent = remain;
 }
+setTotals(totalKm, totalKm);
 
-// 画线 & 标签；保留引用以便降饱和
+// =========== Anti-overlap helpers (simple spiral offsets) ===========
+const placed = []; // store projected screen positions to avoid overlap
+function willOverlap(ptA, threshold=22){ // px
+  for(const p of placed){
+    const dx=ptA.x - p.x, dy=ptA.y - p.y;
+    if(Math.sqrt(dx*dx+dy*dy) < threshold) return true;
+  }
+  return false;
+}
+function spiralOffsets(n=20, step=0.0008){
+  // returns a series of lat/lon delta offsets in a small spiral
+  const arr=[];
+  for(let i=0;i<n;i++){
+    const ang = i*0.9;
+    const r = (i+1)*step;
+    arr.push([Math.sin(ang)*r, Math.cos(ang)*r]);
+  }
+  return arr;
+}
+const OFFSETS = spiralOffsets(30, 0.001);
+
+// 画线 & 标签；保留引用以便降饱和、顺序控制
 const polyRefs = [];
-const labelRefs = [];
+const labelRefs = []; // label markers
+const checkRefs = []; // checkbox inputs
+const midPoints = []; // for potential future anti-overlap on segment labels
 
 segments.forEach((seg, idx)=>{
   const color = dayColors[seg.day] || '#333';
@@ -197,75 +216,173 @@ segments.forEach((seg, idx)=>{
   polyRefs[idx] = line;
 
   const mid = [(seg.A.lat+seg.B.lat)/2,(seg.A.lon+seg.B.lon)/2];
+  midPoints.push(mid);
   const html = `
     <div class="seg-label" id="seglabel_${idx}" style="background:${bg} !important;color:${fg} !important;border-color:${color} !important;">
-      <input type="checkbox" class="segchk" id="segcb_${idx}" data-dist="${seg.dist}" />
+      <input type="checkbox" class="segchk" id="segcb_${idx}" data-idx="${idx}" data-dist="${seg.dist}" />
       <label for="segcb_${idx}" style="margin:0;cursor:pointer;">
         ${seg.day} · ${seg.from} → ${seg.to} · ${seg.dist} km · ${seg.timeStr}
       </label>
     </div>`;
   const marker = L.marker(mid, {icon: L.divIcon({className:'', html})}).addTo(map);
   labelRefs[idx] = marker;
+
+  // store checkbox for sequential control
+  setTimeout(()=>{ // wait DOM creation
+    const el = document.getElementById(`segcb_${idx}`);
+    if(el) checkRefs[idx]=el;
+  }, 0);
 });
 
-// 点位 + 常显标签（D# 名称｜海拔m）
-points.forEach(([name,lat,lon,day,elev])=>{
+// 点位 + 常显标签（与路线同色底）+ 防遮挡偏移
+function addPointLabel(name, lat, lon, day, elev){
   const color = dayColors[day] || '#333';
   const fg = (luminance(color)>160 ? "#000" : "#fff");
   const bg = rgba(color, 0.90);
   L.circleMarker([lat,lon], {radius:4, weight:2, color, fillColor: color, fillOpacity:1}).addTo(map);
+
+  // try offsets to avoid overlap in screen space
+  let finalLat=lat, finalLon=lon;
+  let found=false;
+  for(const [dlat, dlon] of OFFSETS){
+    const testLat = lat + dlat, testLon = lon + dlon;
+    const ptScreen = map.latLngToLayerPoint([testLat, testLon]);
+    if(!willOverlap(ptScreen)){
+      finalLat=testLat; finalLon=testLon;
+      placed.push(ptScreen);
+      found=true; break;
+    }
+  }
+  if(!found){
+    placed.push(map.latLngToLayerPoint([finalLat, finalLon]));
+  }
+
   const tagHtml = `<div class="tag-box" style="background:${bg} !important;color:${fg} !important;border-color:${color} !important;">
     ${day} ${name}｜${elev} m
   </div>`;
-  L.marker([lat,lon], {icon: L.divIcon({className:'', html:tagHtml})}).addTo(map);
-});
+  L.marker([finalLat,finalLon], {icon: L.divIcon({className:'', html:tagHtml})}).addTo(map);
+}
 
-// 起点：仅 D1 的第一个地点（成都）加旗帜
-(function(){
+// 初次添加点位标签（需要在地图渲染后拿到屏幕点）
+map.whenReady(()=>{
+  points.forEach(([name,lat,lon,day,elev])=> addPointLabel(name,lat,lon,day,elev));
+  // 起点旗帜：D1 第一个点
   const startName = points.find(p => p[3]==="D1")[0];
   const p = pt[startName];
   if(p){
     const flagHtml = `<div class="flag" title="起点（D1）">🚩</div>`;
     L.marker([p.lat, p.lon], {icon: L.divIcon({className:'', html:flagHtml})}).addTo(map);
   }
-})();
+});
 
-// 勾选后：线条 & 标签降饱和 + 剩余里程更新
+// =========== 顺序勾选 & 持久化（localStorage） ===========
+const STORAGE_KEY = "chuan_gan_route_checked_indices_v1";
+
+function persistState(){
+  const arr = checkRefs.map((el, i)=> el && el.checked ? 1 : 0);
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(arr));
+}
+function loadState(){
+  try{
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if(!raw) return null;
+    const arr = JSON.parse(raw);
+    if(!Array.isArray(arr)) return null;
+    return arr.map(v=> v?1:0);
+  }catch(e){ return null; }
+}
+
+// sequential enabling logic
+function applySequentialRules(){
+  // disable all first
+  checkRefs.forEach(el=>{ if(el){ el.disabled = true; }});
+  // find the first unchecked index; enable it（以及之前的保持可读、不可改顺序回退）
+  let firstUnchecked = checkRefs.findIndex(el=> el && !el.checked);
+  if(firstUnchecked === -1) firstUnchecked = checkRefs.length-1;
+  // enable exactly one: the first unchecked
+  if(checkRefs[firstUnchecked]) checkRefs[firstUnchecked].disabled = false;
+}
+
+function updateVisualsFromChecks(){
+  // Set remaining
+  let checkedDist = 0;
+  checkRefs.forEach((el, i)=>{
+    if(!el) return;
+    const dist = parseInt(el.getAttribute('data-dist')||'0',10);
+    const poly = polyRefs[i];
+    const labelMarker = labelRefs[i];
+    if(el.checked){
+      checkedDist += dist;
+      // dim visuals
+      if(poly && poly._path){ poly._path.style.filter="saturate(35%) brightness(0.95)"; poly._path.style.opacity="0.45"; }
+      if(labelMarker){
+        const nd = labelMarker.getElement();
+        if(nd) nd.classList.add('dimmed');
+      }
+    }else{
+      if(poly && poly._path){ poly._path.style.filter=""; poly._path.style.opacity="0.95"; }
+      if(labelMarker){
+        const nd = labelMarker.getElement();
+        if(nd) nd.classList.remove('dimmed');
+      }
+    }
+  });
+  setTotals(totalKm, Math.max(0, totalKm-checkedDist));
+}
+
+// Restore state (in-order)
+function restoreFromStorage(){
+  const arr = loadState();
+  if(!arr) { applySequentialRules(); updateVisualsFromChecks(); return; }
+  // enforce order: only allow continuous leading 1s
+  let lastIndex = -1;
+  for(let i=0;i<arr.length;i++){
+    if(arr[i]===1){
+      if(i===lastIndex+1){
+        if(checkRefs[i]) checkRefs[i].checked = true;
+        lastIndex = i;
+      }else{ break; }
+    }else{ break; }
+  }
+  applySequentialRules();
+  updateVisualsFromChecks();
+}
+
 document.addEventListener('change', e=>{
   if(e.target && e.target.classList.contains('segchk')){
-    const id = e.target.id.replace('segcb_','');
-    const poly = polyRefs[id];
-    const labelMarker = labelRefs[id];
-    if(poly){
-      const layerEl = poly._path;
-      if(layerEl){
-        if(e.target.checked){
-          layerEl.style.filter = "saturate(35%) brightness(0.95)";
-          layerEl.style.opacity = "0.45";
-        }else{
-          layerEl.style.filter = "";
-          layerEl.style.opacity = "0.95";
+    const idx = parseInt(e.target.getAttribute('data-idx'),10);
+    if(Number.isFinite(idx)){
+      // block out-of-order checks
+      const prev = idx-1;
+      if(prev>=0 && (!checkRefs[prev] || !checkRefs[prev].checked)){
+        e.target.checked = false; // revert
+        return;
+      }
+      // If unchecking an already checked one, also clear all after it
+      if(!e.target.checked){
+        for(let j=idx+1;j<checkRefs.length;j++){
+          if(checkRefs[j]) checkRefs[j].checked = false;
         }
       }
+      applySequentialRules();
+      updateVisualsFromChecks();
+      persistState();
     }
-    if(labelMarker){
-      const iconEl = labelMarker.getElement();
-      if(iconEl){
-        if(e.target.checked){
-          iconEl.classList.add('dimmed');
-        }else{
-          iconEl.classList.remove('dimmed');
-        }
-      }
-    }
-    recalcRemaining();
   }
+});
+
+// initial state after DOM settle
+window.addEventListener('load', ()=>{
+  // ensure references are set
+  setTimeout(()=>{
+    restoreFromStorage();
+  }, 100);
 });
 </script>
 </body>
 </html>
 """
-path = "/mnt/data/川甘环线-纯净版-起点D1-美化勾选-降饱和.html"
+path = "/mnt/data/川甘环线-顺序勾选-持久化-防遮挡.html"
 with open(path, "w", encoding="utf-8") as f:
     f.write(html)
 path
