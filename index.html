@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>川甘环线 · D1–D8 分段配色 · 总/剩余里程 · 高德深链</title>
+<link
+  rel="stylesheet"
+  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+  crossorigin=""
+/>
+<style>
+  html, body, #map { height: 100%; margin: 0; }
+  .tag-box { 
+    padding: 2px 6px; border-radius: 6px; border: 1px solid #999; 
+    font-size: 11px; font-weight: 600; white-space: nowrap;
+    background: rgba(255,255,255,0.9); color: #111;
+  }
+  .seg-label {
+    padding: 4px 8px; border-radius: 8px; 
+    font-size: 11px; font-weight: 700; white-space: nowrap;
+    display: flex; gap: 6px; align-items: center; border: 1px solid #999;
+  }
+  .legend {
+    position: absolute; right: 10px; top: 10px; z-index: 1001;
+    background: rgba(255,255,255,0.95); padding: 8px 10px; border:1px solid #999; border-radius:10px;
+    font-size: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+  }
+  .legend .row { display:flex; align-items:center; gap:8px; margin:3px 0; }
+  .legend .swatch { width:14px; height:14px; border-radius:3px; border:1px solid #666; }
+  .overlay {
+    position: absolute; left: 10px; top: 10px; z-index: 1001;
+    background: rgba(255,255,255,0.95); padding: 10px 14px; border: 1px solid #999; border-radius: 10px;
+    font-size: 13px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+  }
+  .amap-btn {
+    color: #0a7d13; text-decoration: underline; font-weight: 700;
+  }
+  .leaflet-div-icon { background: transparent; border: 0; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+
+<div class="overlay">
+  <div style="font-weight:800;font-size:14px;">总里程：<span id="total_km">--</span> km</div>
+  <div style="margin-top:6px;font-weight:700;">剩余里程：<span id="remain_km">--</span> km</div>
+  <div style="margin-top:4px;font-size:12px;color:#666;">勾选已完成的路段，自动扣减剩余里程</div>
+</div>
+
+<div class="legend">
+  <div style="font-weight:700;margin-bottom:4px;">D1–D8 图例</div>
+  <div class="row"><span class="swatch" style="background:#d62728"></span> D1</div>
+  <div class="row"><span class="swatch" style="background:#1f77b4"></span> D2</div>
+  <div class="row"><span class="swatch" style="background:#2ca02c"></span> D3</div>
+  <div class="row"><span class="swatch" style="background:#ff7f0e"></span> D4</div>
+  <div class="row"><span class="swatch" style="background:#9467bd"></span> D5</div>
+  <div class="row"><span class="swatch" style="background:#8c564b"></span> D6</div>
+  <div class="row"><span class="swatch" style="background:#e377c2"></span> D7</div>
+  <div class="row"><span class="swatch" style="background:#7f7f7f"></span> D8</div>
+</div>
+
+<script
+  src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+  crossorigin="">
+</script>
+<script>
+const dayColors = {
+  D1:"#d62728", D2:"#1f77b4", D3:"#2ca02c", D4:"#ff7f0e",
+  D5:"#9467bd", D6:"#8c564b", D7:"#e377c2", D8:"#7f7f7f"
+};
+function luminance(hex){
+  const c = hex.replace('#',''); const r=parseInt(c.slice(0,2),16), g=parseInt(c.slice(2,4),16), b=parseInt(c.slice(4,6),16);
+  return 0.299*r+0.587*g+0.114*b;
+}
+function textColor(hex){ return luminance(hex)>160 ? "#000" : "#fff"; }
+function rgba(hex, a=0.92){
+  const c = hex.replace('#',''); const r=parseInt(c.slice(0,2),16), g=parseInt(c.slice(2,4),16), b=parseInt(c.slice(4,6),16);
+  return `rgba(${r},${g},${b},${a})`;
+}
+
+const points = [
+  ["成都",30.658,104.064,"D1",500],
+  ["松潘",32.6386,103.5975,"D1",2850],
+  ["川主寺镇",32.77682,103.61733,"D1",3000],
+  ["九寨沟",33.20000,103.90000,"D1",2000],
+  ["神仙池",33.25000,103.65000,"D2",3300],
+  ["迭部",34.0560,103.2219,"D2",3000],
+  ["扎尕那",34.23595,103.18631,"D3",3000],
+  ["洛克之路",34.24800,103.18000,"D3",3100],
+  ["米拉日巴佛阁",35.00673,102.91556,"D3",2900],
+  ["合作",34.99837,102.90999,"D3",2900],
+  ["夏河",35.20256,102.52173,"D4",2900],
+  ["拉卜楞寺",35.19306,102.50694,"D4",2900],
+  ["桑科草原",35.11477,102.42877,"D4",3200],
+  ["碌曲",34.59042,102.48892,"D4",3500],
+  ["郎木寺",34.09139,102.63639,"D4",3300],
+  ["唐克",33.4106,102.46754,"D5",3400],
+  ["阿坝",32.90502,101.70192,"D6",3300],
+  ["各莫寺",32.98,101.38,"D6",3400],
+  ["莲宝叶则",33.233,101.08,"D6",4000],
+  ["阿坝（返）",32.90502,101.70192,"D6",3300],
+  ["观音桥",31.79968,101.65295,"D7",2500],
+  ["玉科草原",31.28858,101.17983,"D7",3800],
+  ["党岭",30.8521,101.9338,"D7",3200],
+  ["丹巴",30.877,101.886,"D7",1900],
+  ["巴郎山",30.889,102.869,"D8",4460],
+  ["成都（终）",30.658,104.064,"D8",500]
+];
+
+const order = [
+  "成都","松潘","川主寺镇","九寨沟",
+  "神仙池","迭部",
+  "扎尕那","洛克之路","米拉日巴佛阁","合作",
+  "夏河","拉卜楞寺","桑科草原","碌曲","郎木寺",
+  "唐克",
+  "阿坝","各莫寺","莲宝叶则","阿坝（返）",
+  "观音桥","玉科草原","党岭","丹巴",
+  "巴郎山","成都（终）"
+];
+
+// lookup
+const pt = {};
+points.forEach(([n,lat,lon,day,elev])=>pt[n]={lat,lon,day,elev});
+
+// haversine & mountain factor
+function haversineKm(lat1,lon1,lat2,lon2){
+  const R=6371; const dLat=(lat2-lat1)*Math.PI/180, dLon=(lon2-lon1)*Math.PI/180;
+  const a=Math.sin(dLat/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+  return 2*R*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+function roadKm(lat1,lon1,lat2,lon2){ return haversineKm(lat1,lon1,lat2,lon2)*1.35; }
+function baselineTimeStr(km, elev1, elev2){
+  const speed = Math.max(elev1,elev2)>=2500 ? 45 : 60;
+  const m = Math.round((km/speed)*60); return `${Math.floor(m/60)}h${(m%60).toString().padStart(2,'0')}m`;
+}
+
+const segments=[];
+let totalKm=0;
+for(let i=0;i<order.length-1;i++){
+  const a=order[i], b=order[i+1];
+  const A=pt[a], B=pt[b];
+  const dist = Math.round(roadKm(A.lat,A.lon,B.lat,B.lon));
+  totalKm+=dist;
+  const day = A.day;
+  const timeStr = baselineTimeStr(dist, A.elev, B.elev);
+  const amap = `https://uri.amap.com/navigation?from=${A.lon},${A.lat},${encodeURIComponent(a)}&to=${B.lon},${B.lat},${encodeURIComponent(b)}&mode=car&src=chatgpt`;
+  segments.push({from:a,to:b,day,dist, timeStr, amap, A, B});
+}
+
+// map
+const map = L.map('map').setView([33.0,102.6], 6);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 18, attribution: '&copy; OpenStreetMap'
+}).addTo(map);
+
+// total/remaining
+document.getElementById('total_km').textContent = totalKm;
+document.getElementById('remain_km').textContent = totalKm;
+
+function recalcRemaining(){
+  let checked=0;
+  document.querySelectorAll('.segchk').forEach(chk=>{
+    if(chk.checked){ checked += parseInt(chk.dataset.dist||'0',10); }
+  });
+  const remain = Math.max(0, totalKm - checked);
+  document.getElementById('remain_km').textContent = remain;
+}
+
+// draw segments
+segments.forEach((seg, idx)=>{
+  const color = dayColors[seg.day] || '#333';
+  const line = L.polyline([[seg.A.lat,seg.A.lon],[seg.B.lat,seg.B.lon]], {color, weight:5, opacity:0.95}).addTo(map);
+
+  // midpoint
+  const mid = [(seg.A.lat+seg.B.lat)/2,(seg.A.lon+seg.B.lon)/2];
+
+  // colored label with checkbox
+  const fg = textColor(color), bg = rgba(color, 0.92);
+  const html = `
+    <div class="seg-label" style="background:${bg};color:${fg};border-color:${color}">
+      <input type="checkbox" class="segchk" id="segcb_${idx}" data-dist="${seg.dist}" />
+      <label for="segcb_${idx}" style="margin:0;cursor:pointer;">
+        ${seg.day} · ${seg.from} → ${seg.to} · ${seg.dist} km · ${seg.timeStr}
+      </label>
+      <span style="margin-left:8px">
+        <a class="amap-btn" href="${seg.amap}" target="_blank">高德</a>
+      </span>
+    </div>`;
+  const divIcon = L.divIcon({className:'', html});
+  L.marker(mid, {icon:divIcon}).addTo(map);
+
+  // small pin to hint also clickable
+  L.marker([mid[0]+0.03, mid[1]], {title:'高德导航（实时）'})
+    .bindPopup(`<a href="${seg.amap}" target="_blank">在高德打开此段</a>`)
+    .addTo(map);
+});
+
+// points with always-visible labels (D# 名称｜海拔)
+points.forEach(([name,lat,lon,day,elev])=>{
+  const color = dayColors[day] || '#333';
+  L.circleMarker([lat,lon], {radius:4, weight:2, color, fillColor: color, fillOpacity:1}).addTo(map);
+  const tagHtml = `<div class="tag-box" style="background:${rgba(color,0.90)};color:${textColor(color)};border-color:${color}">
+    ${day} ${name}｜${elev} m
+  </div>`;
+  const tagIcon = L.divIcon({className:'', html:tagHtml});
+  L.marker([lat,lon], {icon:tagIcon}).addTo(map);
+});
+
+// checkbox logic
+document.addEventListener('change', e=>{
+  if(e.target && e.target.classList.contains('segchk')) recalcRemaining();
+});
+</script>
+</body>
+</html>
