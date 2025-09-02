@@ -1,17 +1,17 @@
-# Generate an updated one-file HTML:
-# - Segment labels use per-day colored backgrounds (with !important to ensure visibility)
-# - Start-of-day points have a small flag marker
-# - Gaode links are hidden (not shown in labels); instead:
-#     * Hovering a line shows a tooltip “高德导航（点击打开）”
-#     * Clicking the line opens the Gaode deep-link for that segment
-# - Keep total/remaining km overlay and checkboxes on segment labels
+# Build a brand‑new, from‑scratch single‑file web map per your specs.
+# Features:
+# - D1–D8 color-coded polylines
+# - Always-visible point labels: "D# 地名｜海拔m"
+# - Start-of-day flags 🚩 at D1..D8 day starts
+# - Segment labels (colored by day) with checkboxes; top-left shows total / remaining km
+# - Hover a line shows “高德导航（点击打开）”; clicking the line opens Amap deep-link
 
 html = r"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>川甘环线 · D1–D8 分段配色 · 起点旗帜 · 线条悬浮高德</title>
+<title>川甘环线（重制版）· D1–D8 分段配色 · 起点旗帜 · 线条悬浮高德</title>
 <link
   rel="stylesheet"
   href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
@@ -20,21 +20,6 @@ html = r"""<!DOCTYPE html>
 />
 <style>
   html, body, #map { height: 100%; margin: 0; }
-  .tag-box, .seg-label {
-    border-radius: 8px !important;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.18) !important;
-    -webkit-backface-visibility: hidden;
-    transform: translateZ(0);
-  }
-  .tag-box { 
-    padding: 2px 8px; font-size: 11px; font-weight: 700; white-space: nowrap;
-    border: 1px solid rgba(0,0,0,0.35) !important;
-  }
-  .seg-label {
-    padding: 4px 10px; font-size: 11px; font-weight: 800; white-space: nowrap;
-    display: flex; gap: 6px; align-items: center;
-    border: 1px solid rgba(0,0,0,0.35) !important;
-  }
   .legend {
     position: absolute; right: 10px; top: 10px; z-index: 1001;
     background: rgba(255,255,255,0.95); padding: 8px 10px; border:1px solid #999; border-radius:10px;
@@ -46,6 +31,20 @@ html = r"""<!DOCTYPE html>
     position: absolute; left: 10px; top: 10px; z-index: 1001;
     background: rgba(255,255,255,0.95); padding: 10px 14px; border: 1px solid #999; border-radius: 10px;
     font-size: 13px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+  }
+  .tag-box, .seg-label {
+    border-radius: 8px !important;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.18) !important;
+    -webkit-backface-visibility: hidden;
+    transform: translateZ(0);
+    border: 1px solid rgba(0,0,0,0.35) !important;
+  }
+  .tag-box { 
+    padding: 2px 8px; font-size: 11px; font-weight: 700; white-space: nowrap;
+  }
+  .seg-label {
+    padding: 4px 10px; font-size: 11px; font-weight: 800; white-space: nowrap;
+    display: flex; gap: 6px; align-items: center;
   }
   .leaflet-div-icon { background: transparent !important; border: 0 !important; }
   .flag { font-size: 18px; line-height: 18px; transform: translate(0,-16px); }
@@ -92,7 +91,7 @@ function rgba(hex, a=0.92){
   return `rgba(${r},${g},${b},${a})`;
 }
 
-// Points
+// Points data
 const points = [
   ["成都",30.658,104.064,"D1",500],
   ["松潘",32.6386,103.5975,"D1",2850],
@@ -132,17 +131,8 @@ const order = [
   "巴郎山","成都（终）"
 ];
 
-// Day start flags (based on your original D1–D8 narrative)
-const dayStarts = {
-  "D1":"成都",
-  "D2":"九寨沟",
-  "D3":"迭部",
-  "D4":"合作",
-  "D5":"郎木寺",
-  "D6":"唐克",
-  "D7":"阿坝",
-  "D8":"丹巴"
-};
+// Day start (flags)
+const dayStarts = { D1:"成都", D2:"九寨沟", D3:"迭部", D4:"合作", D5:"郎木寺", D6:"唐克", D7:"阿坝", D8:"丹巴" };
 
 const pt = {}; points.forEach(([n,lat,lon,day,elev])=>pt[n]={lat,lon,day,elev});
 
@@ -175,10 +165,9 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   maxZoom: 18, attribution: '&copy; OpenStreetMap'
 }).addTo(map);
 
-// total/remaining
+// total / remaining
 document.getElementById('total_km').textContent = totalKm;
 document.getElementById('remain_km').textContent = totalKm;
-
 function recalcRemaining(){
   let checked=0;
   document.querySelectorAll('.segchk').forEach(chk=>{
@@ -193,14 +182,11 @@ segments.forEach((seg, idx)=>{
   const fg = (luminance(color)>160 ? "#000" : "#fff");
   const bg = rgba(color, 0.92);
 
-  // polyline with hover tooltip and click to open Amap
   const line = L.polyline([[seg.A.lat,seg.A.lon],[seg.B.lat,seg.B.lon]], {color, weight:5, opacity:0.95})
     .addTo(map)
     .bindTooltip("高德导航（点击打开）", {sticky:true});
-
   line.on('click', ()=>{ window.open(seg.amap, '_blank'); });
 
-  // midpoint colored label with checkbox (no visible Gaode link)
   const mid = [(seg.A.lat+seg.B.lat)/2,(seg.A.lon+seg.B.lon)/2];
   const html = `
     <div class="seg-label" style="background:${bg} !important;color:${fg} !important;border-color:${color} !important;">
@@ -212,26 +198,23 @@ segments.forEach((seg, idx)=>{
   L.marker(mid, {icon: L.divIcon({className:'', html})}).addTo(map);
 });
 
-// point labels and day-start flags
+// points + labels
 points.forEach(([name,lat,lon,day,elev])=>{
   const color = dayColors[day] || '#333';
   const fg = (luminance(color)>160 ? "#000" : "#fff");
   const bg = rgba(color, 0.90);
 
-  // small colored dot
   L.circleMarker([lat,lon], {radius:4, weight:2, color, fillColor: color, fillOpacity:1}).addTo(map);
-  // always-visible label
   const tagHtml = `<div class="tag-box" style="background:${bg} !important;color:${fg} !important;border-color:${color} !important;">
     ${day} ${name}｜${elev} m
   </div>`;
   L.marker([lat,lon], {icon: L.divIcon({className:'', html:tagHtml})}).addTo(map);
 });
 
-// add flags to day starts
+// day start flags
 Object.entries(dayStarts).forEach(([d, startName])=>{
   const p = pt[startName];
   if(!p) return;
-  const color = dayColors[d] || '#333';
   const flagHtml = `<div class="flag" title="${d} 起点">🚩</div>`;
   L.marker([p.lat, p.lon], {icon: L.divIcon({className:'', html:flagHtml})}).addTo(map);
 });
@@ -244,7 +227,7 @@ document.addEventListener('change', e=>{
 </body>
 </html>
 """
-path = "/mnt/data/川甘环线-网页版-分天配色-起点旗帜-线悬浮高德.html"
-with open(path, "w", encoding="utf-8") as f:
+out = "/mnt/data/川甘环线-重制版-分天配色-旗帜-线悬浮高德.html"
+with open(out, "w", encoding="utf-8") as f:
     f.write(html)
-path
+out
