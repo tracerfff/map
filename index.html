@@ -1,17 +1,11 @@
-# Build a brand‑new, from‑scratch single‑file web map per your specs.
-# Features:
-# - D1–D8 color-coded polylines
-# - Always-visible point labels: "D# 地名｜海拔m"
-# - Start-of-day flags 🚩 at D1..D8 day starts
-# - Segment labels (colored by day) with checkboxes; top-left shows total / remaining km
-# - Hover a line shows “高德导航（点击打开）”; clicking the line opens Amap deep-link
-
+# Update: single-file web map with (1) only Day1 first point as the trip start flag,
+# (2) prettier custom checkboxes, and (3) desaturate/dim segments & labels when checked.
 html = r"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>川甘环线（重制版）· D1–D8 分段配色 · 起点旗帜 · 线条悬浮高德</title>
+<title>川甘环线（重制·美化勾选&降饱和）</title>
 <link
   rel="stylesheet"
   href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
@@ -33,7 +27,7 @@ html = r"""<!DOCTYPE html>
     font-size: 13px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);
   }
   .tag-box, .seg-label {
-    border-radius: 8px !important;
+    border-radius: 10px !important;
     box-shadow: 0 2px 6px rgba(0,0,0,0.18) !important;
     -webkit-backface-visibility: hidden;
     transform: translateZ(0);
@@ -43,11 +37,26 @@ html = r"""<!DOCTYPE html>
     padding: 2px 8px; font-size: 11px; font-weight: 700; white-space: nowrap;
   }
   .seg-label {
-    padding: 4px 10px; font-size: 11px; font-weight: 800; white-space: nowrap;
-    display: flex; gap: 6px; align-items: center;
+    padding: 6px 10px; font-size: 11px; font-weight: 800; white-space: nowrap;
+    display: inline-flex; gap: 8px; align-items: center;
   }
   .leaflet-div-icon { background: transparent !important; border: 0 !important; }
-  .flag { font-size: 18px; line-height: 18px; transform: translate(0,-16px); }
+  .flag { font-size: 20px; line-height: 20px; transform: translate(0,-18px); }
+
+  /* Pretty checkbox */
+  .segchk { appearance: none; -webkit-appearance: none; width: 16px; height: 16px;
+            border-radius: 4px; border: 2px solid rgba(255,255,255,0.9); outline: none;
+            display: inline-block; position: relative; cursor: pointer; background: rgba(255,255,255,0.25); }
+  .segchk::after {
+    content: "✓"; position: absolute; top: -2px; left: 2px; font-size: 14px; color: #fff;
+    opacity: 0; transform: scale(0.5);
+    transition: all .15s ease;
+  }
+  .segchk:checked { background: rgba(0,0,0,0.3); }
+  .segchk:checked::after { opacity: 1; transform: scale(1); }
+
+  /* Dimmed style helper */
+  .dimmed { filter: saturate(35%) brightness(0.95); opacity: 0.5; }
 </style>
 </head>
 <body>
@@ -56,7 +65,7 @@ html = r"""<!DOCTYPE html>
 <div class="overlay">
   <div style="font-weight:800;font-size:14px;">总里程：<span id="total_km">--</span> km</div>
   <div style="margin-top:6px;font-weight:700;">剩余里程：<span id="remain_km">--</span> km</div>
-  <div style="margin-top:4px;font-size:12px;color:#666;">勾选已完成的路段，自动扣减剩余里程</div>
+  <div style="margin-top:4px;font-size:12px;color:#666;">勾选已完成的路段，自动扣减剩余里程；勾选后该段会降饱和度</div>
 </div>
 
 <div class="legend">
@@ -91,7 +100,7 @@ function rgba(hex, a=0.92){
   return `rgba(${r},${g},${b},${a})`;
 }
 
-// Points data
+// Points & route
 const points = [
   ["成都",30.658,104.064,"D1",500],
   ["松潘",32.6386,103.5975,"D1",2850],
@@ -130,9 +139,6 @@ const order = [
   "观音桥","玉科草原","党岭","丹巴",
   "巴郎山","成都（终）"
 ];
-
-// Day start (flags)
-const dayStarts = { D1:"成都", D2:"九寨沟", D3:"迭部", D4:"合作", D5:"郎木寺", D6:"唐克", D7:"阿坝", D8:"丹巴" };
 
 const pt = {}; points.forEach(([n,lat,lon,day,elev])=>pt[n]={lat,lon,day,elev});
 
@@ -176,7 +182,10 @@ function recalcRemaining(){
   document.getElementById('remain_km').textContent = Math.max(0, totalKm-checked);
 }
 
-// draw segments
+// draw segments & labels; keep references for dimming
+const polyRefs = [];
+const labelRefs = []; // store marker elements' DOM nodes for dimming
+
 segments.forEach((seg, idx)=>{
   const color = dayColors[seg.day] || '#333';
   const fg = (luminance(color)>160 ? "#000" : "#fff");
@@ -186,16 +195,18 @@ segments.forEach((seg, idx)=>{
     .addTo(map)
     .bindTooltip("高德导航（点击打开）", {sticky:true});
   line.on('click', ()=>{ window.open(seg.amap, '_blank'); });
+  polyRefs[idx] = line;
 
   const mid = [(seg.A.lat+seg.B.lat)/2,(seg.A.lon+seg.B.lon)/2];
   const html = `
-    <div class="seg-label" style="background:${bg} !important;color:${fg} !important;border-color:${color} !important;">
+    <div class="seg-label" id="seglabel_${idx}" style="background:${bg} !important;color:${fg} !important;border-color:${color} !important;">
       <input type="checkbox" class="segchk" id="segcb_${idx}" data-dist="${seg.dist}" />
       <label for="segcb_${idx}" style="margin:0;cursor:pointer;">
         ${seg.day} · ${seg.from} → ${seg.to} · ${seg.dist} km · ${seg.timeStr}
       </label>
     </div>`;
-  L.marker(mid, {icon: L.divIcon({className:'', html})}).addTo(map);
+  const marker = L.marker(mid, {icon: L.divIcon({className:'', html})}).addTo(map);
+  labelRefs[idx] = marker;
 });
 
 // points + labels
@@ -203,7 +214,6 @@ points.forEach(([name,lat,lon,day,elev])=>{
   const color = dayColors[day] || '#333';
   const fg = (luminance(color)>160 ? "#000" : "#fff");
   const bg = rgba(color, 0.90);
-
   L.circleMarker([lat,lon], {radius:4, weight:2, color, fillColor: color, fillOpacity:1}).addTo(map);
   const tagHtml = `<div class="tag-box" style="background:${bg} !important;color:${fg} !important;border-color:${color} !important;">
     ${day} ${name}｜${elev} m
@@ -211,23 +221,52 @@ points.forEach(([name,lat,lon,day,elev])=>{
   L.marker([lat,lon], {icon: L.divIcon({className:'', html:tagHtml})}).addTo(map);
 });
 
-// day start flags
-Object.entries(dayStarts).forEach(([d, startName])=>{
+// Only show a START flag at Day1's first point
+(function(){
+  const startName = points.find(p => p[3]==="D1")[0]; // first D1 entry
   const p = pt[startName];
-  if(!p) return;
-  const flagHtml = `<div class="flag" title="${d} 起点">🚩</div>`;
-  L.marker([p.lat, p.lon], {icon: L.divIcon({className:'', html:flagHtml})}).addTo(map);
-});
+  if(p){
+    const flagHtml = `<div class="flag" title="起点（D1）">🚩</div>`;
+    L.marker([p.lat, p.lon], {icon: L.divIcon({className:'', html:flagHtml})}).addTo(map);
+  }
+})();
 
-// checkbox logic
+// checkbox logic: dim polyline & its label when checked
 document.addEventListener('change', e=>{
-  if(e.target && e.target.classList.contains('segchk')) recalcRemaining();
+  if(e.target && e.target.classList.contains('segchk')){
+    const id = e.target.id.replace('segcb_','');
+    const poly = polyRefs[id];
+    const labelMarker = labelRefs[id];
+    if(poly){
+      const layerEl = poly._path; // SVG path element
+      if(layerEl){
+        if(e.target.checked){
+          layerEl.style.filter = "saturate(35%) brightness(0.95)";
+          layerEl.style.opacity = "0.45";
+        }else{
+          layerEl.style.filter = "";
+          layerEl.style.opacity = "0.95";
+        }
+      }
+    }
+    if(labelMarker){
+      const iconEl = labelMarker.getElement();
+      if(iconEl){
+        if(e.target.checked){
+          iconEl.classList.add('dimmed');
+        }else{
+          iconEl.classList.remove('dimmed');
+        }
+      }
+    }
+    recalcRemaining();
+  }
 });
 </script>
 </body>
 </html>
 """
-out = "/mnt/data/川甘环线-重制版-分天配色-旗帜-线悬浮高德.html"
+out = "/mnt/data/川甘环线-重制版-起点仅D1-美化勾选-降饱和.html"
 with open(out, "w", encoding="utf-8") as f:
     f.write(html)
 out
