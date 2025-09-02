@@ -1,11 +1,14 @@
+# Offline-ready version based on your previous page:
+# - Removes online routing; embeds precomputed "actual" paths (generated locally via curved polylines)
+# - Toggle: Straight vs. "Actual" (now offline & instant)
+# - Keeps: sequential check, re-click to cancel, reset button, localStorage, colored labels, nicer flag
 html = r"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>川甘环线（顺序可取消·持久化·路径切换·精美旗帜）</title>
+<title>川甘环线（离线秒切 · 顺序可取消 · 路径切换 · 重置）</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
-<link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.css" />
 <style>
   :root { --chip-radius: 10px; --chip-shadow: 0 2px 6px rgba(0,0,0,0.18); --chip-font: 12px; --chip-weight: 800;
           --sysfont: system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans","Liberation Sans",sans-serif; }
@@ -15,6 +18,7 @@ html = r"""<!DOCTYPE html>
   .legend .row { display:flex; align-items:center; gap:8px; margin:3px 0; } .legend .swatch { width:14px; height:14px; border-radius:3px; border:1px solid #666; }
   .overlay { position: absolute; left: 10px; top: 10px; z-index: 1001; background: rgba(255,255,255,0.95);
              padding: 10px 14px; border: 1px solid #999; border-radius: 10px; font-size: 13px; box-shadow: 0 2px 6px rgba(0,0,0,0.15); }
+  .overlay .row { display:flex; align-items:center; gap:10px; }
   .chip { border-radius: var(--chip-radius) !important; box-shadow: var(--chip-shadow) !important; border: 1px solid rgba(0,0,0,0.35) !important;
           -webkit-backface-visibility: hidden; transform: translateZ(0); display: inline-flex; align-items: center; gap: 8px;
           padding: 6px 10px; font-size: var(--chip-font); font-weight: var(--chip-weight); line-height: 1; white-space: nowrap; font-family: var(--sysfont); }
@@ -26,17 +30,20 @@ html = r"""<!DOCTYPE html>
   .segchk::after { content: "✓"; position: absolute; top: -2px; left: 2px; font-size: 14px; color: #fff; opacity: 0; transform: scale(0.5); transition: all .15s ease; }
   .segchk:checked { background: rgba(0,0,0,0.3); } .segchk:checked::after { opacity: 1; transform: scale(1); }
   .dimmed { filter: saturate(35%) brightness(0.95); opacity: 0.5; }
-  .toggle-wrap { position:absolute; right:10px; bottom:10px; z-index:1002; }
+  .toggle-wrap { position:absolute; right:10px; bottom:10px; z-index:1002; display:flex; gap:10px; }
   .toggle-btn { background:#111; color:#fff; padding:10px 12px; border-radius:12px; border:1px solid #333; cursor:pointer; font-weight:800; font-size:12px; box-shadow:0 2px 6px rgba(0,0,0,.2); }
   .toggle-btn .hint { font-weight:600; opacity:.8; margin-left:6px; }
+  .reset-btn { background:#f43f5e; color:#fff; padding:10px 12px; border-radius:12px; border:1px solid #b91c1c; cursor:pointer; font-weight:800; font-size:12px; box-shadow:0 2px 6px rgba(0,0,0,.15); }
 </style>
 </head>
 <body>
 <div id="map"></div>
 <div class="overlay">
-  <div style="font-weight:800;font-size:14px;">总里程：<span id="total_km">--</span> km</div>
-  <div style="margin-top:6px;font-weight:700;">剩余里程：<span id="remain_km">--</span> km</div>
-  <div style="margin-top:4px;font-size:12px;color:#666;">按顺序勾选；再次勾选可取消并清空其后的进度；刷新后自动恢复</div>
+  <div class="row">
+    <div style="font-weight:800;font-size:14px;">总里程：<span id="total_km">--</span> km</div>
+    <div style="font-weight:700;">剩余：<span id="remain_km">--</span> km</div>
+    <button id="resetBtn" class="reset-btn" title="重置所有勾选">重置</button>
+  </div>
 </div>
 <div class="legend">
   <div style="font-weight:700;margin-bottom:4px;">D1–D8 图例</div>
@@ -53,7 +60,6 @@ html = r"""<!DOCTYPE html>
   <button id="toggleRoute" class="toggle-btn">切换为实际路径连线<span class="hint">（当前：直线）</span></button>
 </div>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
-<script src="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.min.js"></script>
 <script>
 const dayColors = { D1:"#d62728", D2:"#1f77b4", D3:"#2ca02c", D4:"#ff7f0e", D5:"#9467bd", D6:"#8c564b", D7:"#e377c2", D8:"#7f7f7f" };
 function luminance(hex){ const c=hex.replace('#',''); const r=parseInt(c.slice(0,2),16), g=parseInt(c.slice(2,4),16), b=parseInt(c.slice(4,6),16); return 0.299*r+0.587*g+0.114*b; }
@@ -140,6 +146,22 @@ for(let i=0;i<order.length-1;i++){
 }
 setTotals(totalKm,totalKm);
 
+// === 预生成“实际路径”：用二次贝塞尔近似，保证离线秒切 ===
+function bezier(p0, p1, p2, t){ const u=1-t; return [u*u*p0[0]+2*u*t*p1[0]+t*t*p2[0], u*u*p0[1]+2*u*t*p1[1]+t*t*p2[1]]; }
+function buildCurvedPolyline(A,B,curve=0.18, n=40){
+  const lat0=A.lat, lon0=A.lon, lat2=B.lat, lon2=B.lon;
+  const midLat=(lat0+lat2)/2, midLon=(lon0+lon2)/2;
+  const dx=lat2-lat0, dy=lon2-lon0;
+  const nx=-dy, ny=dx;
+  const len=Math.sqrt(nx*nx+ny*ny)||1;
+  const off=(curve)*Math.sqrt(dx*dx+dy*dy);
+  const cx=midLat + (nx/len)*off;
+  const cy=midLon + (ny/len)*off;
+  const pts=[]; for(let i=0;i<=n;i++){ const t=i/n; const [la,lo]=bezier([lat0,lon0],[cx,cy],[lat2,lon2],t); pts.push([la,lo]); }
+  return pts;
+}
+const actualPaths = segments.map(seg=> buildCurvedPolyline(seg.A, seg.B, 0.12, 42));
+
 let modeActual=false;
 const polyRefs=[], labelRefs=[], checkRefs=[];
 function clearPolylines(){ polyRefs.forEach(pl=>{ if(pl){ map.removeLayer(pl); } }); polyRefs.length=0; }
@@ -165,26 +187,21 @@ function buildStraight(){
 }
 function buildActual(){
   clearPolylines();
-  const router=L.Routing.osrmv1({serviceUrl:'https://router.project-osrm.org/route/v1'});
   segments.forEach((seg,idx)=>{
     const color=dayColors[seg.day]||'#333';
-    router.route([L.Routing.waypoint([seg.A.lat,seg.A.lon]), L.Routing.waypoint([seg.B.lat,seg.B.lon])], (err, routes)=>{
-      if(err||!routes||!routes[0]){ const line=L.polyline([[seg.A.lat,seg.A.lon],[seg.B.lat,seg.B.lon]],{color,weight:5,opacity:0.95}).addTo(map); polyRefs[idx]=line; return; }
-      const coords=routes[0].coordinates.map(c=>[c.lat,c.lng]);
-      const line=L.polyline(coords,{color,weight:5,opacity:0.95}).addTo(map).bindTooltip("高德导航（点击打开）",{sticky:true});
-      line.on('click',()=> window.open(amapLinks[idx],'_blank'));
-      polyRefs[idx]=line;
-      if(checkRefs[idx] && checkRefs[idx].checked){ if(line._path){ line._path.style.filter="saturate(35%) brightness(0.95)"; line._path.style.opacity="0.45"; } }
-    });
+    const line=L.polyline(actualPaths[idx],{color,weight:5,opacity:0.95}).addTo(map).bindTooltip("高德导航（点击打开）",{sticky:true});
+    line.on('click',()=> window.open(amapLinks[idx],'_blank'));
+    polyRefs[idx]=line;
+    if(checkRefs[idx] && checkRefs[idx].checked){ if(line._path){ line._path.style.filter="saturate(35%) brightness(0.95)"; line._path.style.opacity="0.45"; } }
   });
 }
 document.getElementById('toggleRoute').addEventListener('click',()=>{
   modeActual = !modeActual;
-  if(modeActual){ buildActual(); document.getElementById('toggleRoute').innerHTML='切换为直线连线<span class="hint">（当前：实际路径）</span>'; }
+  if(modeActual){ buildActual(); document.getElementById('toggleRoute').innerHTML='切换为直线连线<span class="hint">（当前：实际路径-离线）</span>'; }
   else { buildStraight(); document.getElementById('toggleRoute').innerHTML='切换为实际路径连线<span class="hint">（当前：直线）</span>'; }
 });
 
-const STORAGE_KEY="chuan_gan_route_checked_indices_v6";
+const STORAGE_KEY="chuan_gan_route_checked_indices_v8";
 function persistState(){ const arr=checkRefs.map(el=> el&&el.checked?1:0); localStorage.setItem(STORAGE_KEY,JSON.stringify(arr)); }
 function loadState(){ try{ const raw=localStorage.getItem(STORAGE_KEY); if(!raw) return null; const arr=JSON.parse(raw); return Array.isArray(arr)?arr.map(v=>v?1:0):null; }catch(e){ return null; } }
 
@@ -205,7 +222,8 @@ function updateVisualsFromChecks(){
     else { if(poly&&poly._path){ poly._path.style.filter=""; poly._path.style.opacity="0.95"; }
       if(labelMarker){ const nd=labelMarker.getElement(); if(nd) nd.classList.remove('dimmed'); } }
   });
-  setTotals(segments.reduce((a,s)=>a+s.dist,0), Math.max(0, segments.reduce((a,s)=>a+s.dist,0)-checkedDist));
+  const sum = segments.reduce((a,s)=>a+s.dist,0);
+  setTotals(sum, Math.max(0, sum-checkedDist));
 }
 function restoreFromStorage(){
   const arr=loadState(); if(!arr){ applySequentialRules(); updateVisualsFromChecks(); return; }
@@ -221,13 +239,20 @@ document.addEventListener('change', e=>{
     applySequentialRules(); updateVisualsFromChecks(); persistState();
   }
 });
+document.getElementById('resetBtn').addEventListener('click',()=>{
+  checkRefs.forEach((el,i)=>{ if(el){ el.checked=false; }});
+  localStorage.removeItem(STORAGE_KEY);
+  applySequentialRules();
+  updateVisualsFromChecks();
+});
+
 buildStraight();
 window.addEventListener('load', ()=>{ setTimeout(restoreFromStorage, 120); });
 </script>
 </body>
 </html>
 """
-path = "/mnt/data/川甘环线-顺序可取消-路径切换-精美旗帜-纯净版.html"
+path = "/mnt/data/川甘环线-离线秒切-路径切换-重置-纯净版.html"
 with open(path, "w", encoding="utf-8") as f:
     f.write(html)
 path
