@@ -1,174 +1,250 @@
-# Build a color-coded interactive map by day (D1–D8):
-# - Polylines colored per day
-# - Midpoint label boxes colored per day (distance + baseline time)
-# - Always-visible point labels prefixed with day and suffixed with elevation
-# - Keep Gaode (AMap) deep-links for each segment for real-time ETA
+# Generate an updated one-file HTML:
+# - Segment labels use per-day colored backgrounds (with !important to ensure visibility)
+# - Start-of-day points have a small flag marker
+# - Gaode links are hidden (not shown in labels); instead:
+#     * Hovering a line shows a tooltip “高德导航（点击打开）”
+#     * Clicking the line opens the Gaode deep-link for that segment
+# - Keep total/remaining km overlay and checkboxes on segment labels
 
-import math
-import folium
-from folium.features import DivIcon
+html = r"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>川甘环线 · D1–D8 分段配色 · 起点旗帜 · 线条悬浮高德</title>
+<link
+  rel="stylesheet"
+  href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+  integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+  crossorigin=""
+/>
+<style>
+  html, body, #map { height: 100%; margin: 0; }
+  .tag-box, .seg-label {
+    border-radius: 8px !important;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.18) !important;
+    -webkit-backface-visibility: hidden;
+    transform: translateZ(0);
+  }
+  .tag-box { 
+    padding: 2px 8px; font-size: 11px; font-weight: 700; white-space: nowrap;
+    border: 1px solid rgba(0,0,0,0.35) !important;
+  }
+  .seg-label {
+    padding: 4px 10px; font-size: 11px; font-weight: 800; white-space: nowrap;
+    display: flex; gap: 6px; align-items: center;
+    border: 1px solid rgba(0,0,0,0.35) !important;
+  }
+  .legend {
+    position: absolute; right: 10px; top: 10px; z-index: 1001;
+    background: rgba(255,255,255,0.95); padding: 8px 10px; border:1px solid #999; border-radius:10px;
+    font-size: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+  }
+  .legend .row { display:flex; align-items:center; gap:8px; margin:3px 0; }
+  .legend .swatch { width:14px; height:14px; border-radius:3px; border:1px solid #666; }
+  .overlay {
+    position: absolute; left: 10px; top: 10px; z-index: 1001;
+    background: rgba(255,255,255,0.95); padding: 10px 14px; border: 1px solid #999; border-radius: 10px;
+    font-size: 13px; box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+  }
+  .leaflet-div-icon { background: transparent !important; border: 0 !important; }
+  .flag { font-size: 18px; line-height: 18px; transform: translate(0,-16px); }
+</style>
+</head>
+<body>
+<div id="map"></div>
 
-# --------------------------
-# Data
-# --------------------------
-points = [
-    ("成都", 30.658, 104.064, "D1", 500),
-    ("松潘", 32.6386, 103.5975, "D1", 2850),
-    ("川主寺镇", 32.77682, 103.61733, "D1", 3000),
-    ("九寨沟", 33.20000, 103.90000, "D1", 2000),
-    ("神仙池", 33.25000, 103.65000, "D2", 3300),   # 近似
-    ("迭部", 34.0560, 103.2219, "D2", 3000),
-    ("扎尕那", 34.23595, 103.18631, "D3", 3000),
-    ("洛克之路", 34.24800, 103.18000, "D3", 3100), # 近似
-    ("米拉日巴佛阁", 35.00673, 102.91556, "D3", 2900),
-    ("合作", 34.99837, 102.90999, "D3", 2900),
-    ("夏河", 35.20256, 102.52173, "D4", 2900),
-    ("拉卜楞寺", 35.19306, 102.50694, "D4", 2900),
-    ("桑科草原", 35.11477, 102.42877, "D4", 3200),
-    ("碌曲", 34.59042, 102.48892, "D4", 3500),
-    ("郎木寺", 34.09139, 102.63639, "D4", 3300),
-    ("唐克", 33.4106, 102.46754, "D5", 3400),
-    ("阿坝", 32.90502, 101.70192, "D6", 3300),
-    ("各莫寺", 32.98000, 101.38000, "D6", 3400),   # 近似
-    ("莲宝叶则", 33.23300, 101.08000, "D6", 4000), # 入口近似
-    ("阿坝（返）", 32.90502, 101.70192, "D6", 3300),
-    ("观音桥", 31.79968, 101.65295, "D7", 2500),
-    ("玉科草原", 31.28858, 101.17983, "D7", 3800),
-    ("党岭", 30.8521, 101.9338, "D7", 3200),
-    ("丹巴", 30.877, 101.886, "D7", 1900),
-    ("巴郎山", 30.889, 102.869, "D8", 4460),
-    ("成都（终）", 30.658, 104.064, "D8", 500),
-]
+<div class="overlay">
+  <div style="font-weight:800;font-size:14px;">总里程：<span id="total_km">--</span> km</div>
+  <div style="margin-top:6px;font-weight:700;">剩余里程：<span id="remain_km">--</span> km</div>
+  <div style="margin-top:4px;font-size:12px;color:#666;">勾选已完成的路段，自动扣减剩余里程</div>
+</div>
 
-route_order = [
-    "成都","松潘","川主寺镇","九寨沟",
-    "神仙池","迭部",
-    "扎尕那","洛克之路","米拉日巴佛阁","合作",
-    "夏河","拉卜楞寺","桑科草原","碌曲","郎木寺",
-    "唐克",
-    "阿坝","各莫寺","莲宝叶则","阿坝（返）",
-    "观音桥","玉科草原","党岭","丹巴",
-    "巴郎山","成都（终）"
-]
+<div class="legend">
+  <div style="font-weight:700;margin-bottom:4px;">D1–D8 图例</div>
+  <div class="row"><span class="swatch" style="background:#d62728"></span> D1</div>
+  <div class="row"><span class="swatch" style="background:#1f77b4"></span> D2</div>
+  <div class="row"><span class="swatch" style="background:#2ca02c"></span> D3</div>
+  <div class="row"><span class="swatch" style="background:#ff7f0e"></span> D4</div>
+  <div class="row"><span class="swatch" style="background:#9467bd"></span> D5</div>
+  <div class="row"><span class="swatch" style="background:#8c564b"></span> D6</div>
+  <div class="row"><span class="swatch" style="background:#e377c2"></span> D7</div>
+  <div class="row"><span class="swatch" style="background:#7f7f7f"></span> D8</div>
+</div>
 
-pt = {name: (lat, lon, day, elev) for (name, lat, lon, day, elev) in points}
-
-# --------------------------
-# Helpers
-# --------------------------
-def haversine_km(lat1, lon1, lat2, lon2):
-    R = 6371.0
-    dlat = math.radians(lat2 - lat1)
-    dlon = math.radians(lon2 - lon1)
-    a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1))*math.cos(math.radians(lat2))*math.sin(dlon/2)**2
-    c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
-    return R * c
-
-def road_distance_km_gc(lat1, lon1, lat2, lon2):
-    return haversine_km(lat1, lon1, lat2, lon2) * 1.35
-
-def baseline_time_hours(dist_km, elev1, elev2):
-    speed = 45 if max(elev1, elev2) >= 2500 else 60
-    return dist_km / speed
-
-def hhmm(hours):
-    m = int(round(hours*60))
-    return f"{m//60}h{m%60:02d}m"
-
-def hex_to_rgb(hex_color):
-    hex_color = hex_color.lstrip('#')
-    return tuple(int(hex_color[i:i+2], 16) for i in (0,2,4))
-
-def rgb_to_css(r,g,b,a=0.9):
-    return f"rgba({r},{g},{b},{a})"
-
-def text_color_for_bg(hex_color):
-    r,g,b = hex_to_rgb(hex_color)
-    # perceived luminance
-    lum = 0.299*r + 0.587*g + 0.114*b
-    return "#000000" if lum > 160 else "#ffffff"
-
-# Day color palette
-day_colors = {
-    "D1": "#d62728",
-    "D2": "#1f77b4",
-    "D3": "#2ca02c",
-    "D4": "#ff7f0e",
-    "D5": "#9467bd",
-    "D6": "#8c564b",
-    "D7": "#e377c2",
-    "D8": "#7f7f7f",
+<script
+  src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+  integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+  crossorigin="">
+</script>
+<script>
+const dayColors = {
+  D1:"#d62728", D2:"#1f77b4", D3:"#2ca02c", D4:"#ff7f0e",
+  D5:"#9467bd", D6:"#8c564b", D7:"#e377c2", D8:"#7f7f7f"
+};
+function luminance(hex){
+  const c = hex.replace('#',''); const r=parseInt(c.slice(0,2),16), g=parseInt(c.slice(2,4),16), b=parseInt(c.slice(4,6),16);
+  return 0.299*r+0.587*g+0.114*b;
+}
+function textColor(hex){ return luminance(hex)>160 ? "#000" : "#fff"; }
+function rgba(hex, a=0.92){
+  const c = hex.replace('#',''); const r=parseInt(c.slice(0,2),16), g=parseInt(c.slice(2,4),16), b=parseInt(c.slice(4,6),16);
+  return `rgba(${r},${g},${b},${a})`;
 }
 
-# --------------------------
-# Build segments
-# --------------------------
-segments = []
-for i in range(len(route_order)-1):
-    a, b = route_order[i], route_order[i+1]
-    lat1, lon1, dayA, elev1 = pt[a]
-    lat2, lon2, dayB, elev2 = pt[b]
-    dist = road_distance_km_gc(lat1, lon1, lat2, lon2)
-    t = baseline_time_hours(dist, elev1, elev2)
-    day = dayA  # color by starting day's segment
-    segments.append({
-        "from": a, "to": b,
-        "lat1": lat1, "lon1": lon1, "lat2": lat2, "lon2": lon2,
-        "elev1": elev1, "elev2": elev2,
-        "dist_km": int(round(dist)),
-        "time_str": hhmm(t),
-        "day": day,
-        "amap": f"https://uri.amap.com/navigation?from={lon1},{lat1},{a}&to={lon2},{lat2},{b}&mode=car&src=chatgpt"
-    })
+// Points
+const points = [
+  ["成都",30.658,104.064,"D1",500],
+  ["松潘",32.6386,103.5975,"D1",2850],
+  ["川主寺镇",32.77682,103.61733,"D1",3000],
+  ["九寨沟",33.20000,103.90000,"D1",2000],
+  ["神仙池",33.25000,103.65000,"D2",3300],
+  ["迭部",34.0560,103.2219,"D2",3000],
+  ["扎尕那",34.23595,103.18631,"D3",3000],
+  ["洛克之路",34.24800,103.18000,"D3",3100],
+  ["米拉日巴佛阁",35.00673,102.91556,"D3",2900],
+  ["合作",34.99837,102.90999,"D3",2900],
+  ["夏河",35.20256,102.52173,"D4",2900],
+  ["拉卜楞寺",35.19306,102.50694,"D4",2900],
+  ["桑科草原",35.11477,102.42877,"D4",3200],
+  ["碌曲",34.59042,102.48892,"D4",3500],
+  ["郎木寺",34.09139,102.63639,"D4",3300],
+  ["唐克",33.4106,102.46754,"D5",3400],
+  ["阿坝",32.90502,101.70192,"D6",3300],
+  ["各莫寺",32.98,101.38,"D6",3400],
+  ["莲宝叶则",33.233,101.08,"D6",4000],
+  ["阿坝（返）",32.90502,101.70192,"D6",3300],
+  ["观音桥",31.79968,101.65295,"D7",2500],
+  ["玉科草原",31.28858,101.17983,"D7",3800],
+  ["党岭",30.8521,101.9338,"D7",3200],
+  ["丹巴",30.877,101.886,"D7",1900],
+  ["巴郎山",30.889,102.869,"D8",4460],
+  ["成都（终）",30.658,104.064,"D8",500]
+];
+const order = [
+  "成都","松潘","川主寺镇","九寨沟",
+  "神仙池","迭部",
+  "扎尕那","洛克之路","米拉日巴佛阁","合作",
+  "夏河","拉卜楞寺","桑科草原","碌曲","郎木寺",
+  "唐克",
+  "阿坝","各莫寺","莲宝叶则","阿坝（返）",
+  "观音桥","玉科草原","党岭","丹巴",
+  "巴郎山","成都（终）"
+];
 
-# --------------------------
-# Make the map
-# --------------------------
-m = folium.Map(location=[33.0, 102.6], zoom_start=6, control_scale=True)
+// Day start flags (based on your original D1–D8 narrative)
+const dayStarts = {
+  "D1":"成都",
+  "D2":"九寨沟",
+  "D3":"迭部",
+  "D4":"合作",
+  "D5":"郎木寺",
+  "D6":"唐克",
+  "D7":"阿坝",
+  "D8":"丹巴"
+};
 
-# Draw segments (colored per day) + colored label boxes + amap link pins
-for seg in segments:
-    color = day_colors.get(seg["day"], "#333333")
-    txt_color = text_color_for_bg(color)
-    bg_rgba = rgb_to_css(*hex_to_rgb(color), a=0.92)
-    # line
-    folium.PolyLine([(seg["lat1"], seg["lon1"]), (seg["lat2"], seg["lon2"])],
-                    weight=5, opacity=0.95, color=color,
-                    tooltip=f"{seg['from']} → {seg['to']} · {seg['dist_km']} km · {seg['time_str']} ({seg['day']})"
-                    ).add_to(m)
-    # midpoint colored box
-    mid_lat = (seg["lat1"] + seg["lat2"]) / 2
-    mid_lon = (seg["lon1"] + seg["lon2"]) / 2
-    label_html = f"""
-    <div style="background:{bg_rgba};color:{txt_color};
-                padding:3px 8px;border-radius:8px;border:1px solid {color};
-                font-size:11px;font-weight:700;white-space:nowrap;">
-        {seg['day']} · {seg['from']} → {seg['to']} · {seg['dist_km']} km · {seg['time_str']}
-    </div>"""
-    folium.Marker([mid_lat, mid_lon],
-                  icon=DivIcon(icon_size=(280,32), icon_anchor=(0,0), html=label_html)).add_to(m)
-    # amap deep-link pin (small)
-    folium.Marker([mid_lat+0.03, mid_lon],
-                  icon=folium.Icon(color="green", icon="cloud"),
-                  tooltip="高德导航（实时）",
-                  popup=folium.Popup(f"<a href='{seg['amap']}' target='_blank'>在高德打开此段</a>", max_width=260)
-                 ).add_to(m)
+const pt = {}; points.forEach(([n,lat,lon,day,elev])=>pt[n]={lat,lon,day,elev});
 
-# Points with always-visible labels: prefix day + name + elevation
-for name, (lat, lon, day, elev) in pt.items():
-    color = day_colors.get(day, "#333333")
-    txt_color = text_color_for_bg(color)
-    bg_rgba = rgb_to_css(*hex_to_rgb(color), a=0.90)
-    # small dot
-    folium.CircleMarker([lat, lon], radius=4, weight=2, fill=True, fill_opacity=1, color=color).add_to(m)
-    # label
-    tag = f"{day} {name}｜{elev} m"
-    folium.Marker([lat, lon],
-                  icon=DivIcon(icon_size=(160,24), icon_anchor=(0, -10),
-                               html=f"<div style='background:{bg_rgba};color:{txt_color};padding:2px 6px;border-radius:6px;border:1px solid {color};font-size:11px;white-space:nowrap'>{tag}</div>")
-                 ).add_to(m)
+function haversineKm(lat1,lon1,lat2,lon2){
+  const R=6371; const dLat=(lat2-lat1)*Math.PI/180, dLon=(lon2-lon1)*Math.PI/180;
+  const a=Math.sin(dLat/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2;
+  return 2*R*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+function roadKm(lat1,lon1,lat2,lon2){ return haversineKm(lat1,lon1,lat2,lon2)*1.35; }
+function baselineTimeStr(km, elev1, elev2){
+  const speed = Math.max(elev1,elev2)>=2500 ? 45 : 60;
+  const m = Math.round((km/speed)*60); return `${Math.floor(m/60)}h${(m%60).toString().padStart(2,'0')}m`;
+}
 
-out_path = "/mnt/data/川甘环线-交互地图-分天配色-常显标签-高德深链.html"
-m.save(out_path)
+const segments=[];
+let totalKm=0;
+for(let i=0;i<order.length-1;i++){
+  const a=order[i], b=order[i+1];
+  const A=pt[a], B=pt[b];
+  const dist = Math.round(roadKm(A.lat,A.lon,B.lat,B.lon));
+  totalKm+=dist;
+  const day = A.day;
+  const timeStr = baselineTimeStr(dist, A.elev, B.elev);
+  const amap = `https://uri.amap.com/navigation?from=${A.lon},${A.lat},${encodeURIComponent(a)}&to=${B.lon},${B.lat},${encodeURIComponent(b)}&mode=car&src=chatgpt`;
+  segments.push({from:a,to:b,day,dist,timeStr,amap,A,B});
+}
 
-out_path
+const map = L.map('map').setView([33.0,102.6], 6);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 18, attribution: '&copy; OpenStreetMap'
+}).addTo(map);
+
+// total/remaining
+document.getElementById('total_km').textContent = totalKm;
+document.getElementById('remain_km').textContent = totalKm;
+
+function recalcRemaining(){
+  let checked=0;
+  document.querySelectorAll('.segchk').forEach(chk=>{
+    if(chk.checked){ checked += parseInt(chk.dataset.dist||'0',10); }
+  });
+  document.getElementById('remain_km').textContent = Math.max(0, totalKm-checked);
+}
+
+// draw segments
+segments.forEach((seg, idx)=>{
+  const color = dayColors[seg.day] || '#333';
+  const fg = (luminance(color)>160 ? "#000" : "#fff");
+  const bg = rgba(color, 0.92);
+
+  // polyline with hover tooltip and click to open Amap
+  const line = L.polyline([[seg.A.lat,seg.A.lon],[seg.B.lat,seg.B.lon]], {color, weight:5, opacity:0.95})
+    .addTo(map)
+    .bindTooltip("高德导航（点击打开）", {sticky:true});
+
+  line.on('click', ()=>{ window.open(seg.amap, '_blank'); });
+
+  // midpoint colored label with checkbox (no visible Gaode link)
+  const mid = [(seg.A.lat+seg.B.lat)/2,(seg.A.lon+seg.B.lon)/2];
+  const html = `
+    <div class="seg-label" style="background:${bg} !important;color:${fg} !important;border-color:${color} !important;">
+      <input type="checkbox" class="segchk" id="segcb_${idx}" data-dist="${seg.dist}" />
+      <label for="segcb_${idx}" style="margin:0;cursor:pointer;">
+        ${seg.day} · ${seg.from} → ${seg.to} · ${seg.dist} km · ${seg.timeStr}
+      </label>
+    </div>`;
+  L.marker(mid, {icon: L.divIcon({className:'', html})}).addTo(map);
+});
+
+// point labels and day-start flags
+points.forEach(([name,lat,lon,day,elev])=>{
+  const color = dayColors[day] || '#333';
+  const fg = (luminance(color)>160 ? "#000" : "#fff");
+  const bg = rgba(color, 0.90);
+
+  // small colored dot
+  L.circleMarker([lat,lon], {radius:4, weight:2, color, fillColor: color, fillOpacity:1}).addTo(map);
+  // always-visible label
+  const tagHtml = `<div class="tag-box" style="background:${bg} !important;color:${fg} !important;border-color:${color} !important;">
+    ${day} ${name}｜${elev} m
+  </div>`;
+  L.marker([lat,lon], {icon: L.divIcon({className:'', html:tagHtml})}).addTo(map);
+});
+
+// add flags to day starts
+Object.entries(dayStarts).forEach(([d, startName])=>{
+  const p = pt[startName];
+  if(!p) return;
+  const color = dayColors[d] || '#333';
+  const flagHtml = `<div class="flag" title="${d} 起点">🚩</div>`;
+  L.marker([p.lat, p.lon], {icon: L.divIcon({className:'', html:flagHtml})}).addTo(map);
+});
+
+// checkbox logic
+document.addEventListener('change', e=>{
+  if(e.target && e.target.classList.contains('segchk')) recalcRemaining();
+});
+</script>
+</body>
+</html>
+"""
+path = "/mnt/data/川甘环线-网页版-分天配色-起点旗帜-线悬浮高德.html"
+with open(path, "w", encoding="utf-8") as f:
+    f.write(html)
+path
