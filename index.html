@@ -3,8 +3,9 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>川甘环线（离线“导航样式”路径·方向箭头·自适应文字·起点近景）</title>
+<title>川甘环线（真实导航路径·方向箭头·起点居中·约1000km视野）</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine@3.2.12/dist/leaflet-routing-machine.css" />
 <style>
   :root { --chip-radius: 10px; --chip-shadow: 0 2px 6px rgba(0,0,0,0.18); --chip-font: 12px; --chip-weight: 800;
           --sysfont: system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans","Liberation Sans",sans-serif; }
@@ -53,10 +54,11 @@
   <div class="row"><span class="swatch" style="background:#7f7f7f"></span> D8</div>
 </div>
 <div class="toggle-wrap">
-  <button id="toggleRoute" class="toggle-btn">切换为直线连线<span class="hint">（当前：离线导航样式）</span></button>
+  <button id="toggleRoute" class="toggle-btn">切换为直线连线<span class="hint">（当前：导航路径）</span></button>
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script src="https://unpkg.com/leaflet-polylinedecorator@1.7.0/dist/leaflet.polylineDecorator.min.js"></script>
 <script>
 const dayColors = { D1:"#d62728", D2:"#1f77b4", D3:"#2ca02c", D4:"#ff7f0e", D5:"#9467bd", D6:"#8c564b", D7:"#e377c2", D8:"#7f7f7f" };
 function luminance(hex){ const c=hex.replace('#',''); const r=parseInt(c.slice(0,2),16), g=parseInt(c.slice(2,4),16), b=parseInt(c.slice(4,6),16); return 0.299*r+0.587*g+0.114*b; }
@@ -97,7 +99,7 @@ function haversineKm(lat1,lon1,lat2,lon2){ const R=6371, dLat=(lat2-lat1)*Math.P
   const a=Math.sin(dLat/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2; return 2*R*Math.atan2(Math.sqrt(a),Math.sqrt(1-a)); }
 function roadKmApprox(lat1,lon1,lat2,lon2){ return Math.round(haversineKm(lat1,lon1,lat2,lon2)*1.35); }
 
-const map=L.map('map', { zoomControl:true }).setView([30.658,104.064],8);
+const map=L.map('map', { zoomControl:true }).setView([33.0,102.6],6);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:18,attribution:'&copy; OpenStreetMap'}).addTo(map);
 
 function setTotals(total,remain){ document.getElementById('total_km').textContent=total; document.getElementById('remain_km').textContent=remain; }
@@ -108,15 +110,14 @@ function spiralOffsets(n=28,step=0.001){ const arr=[]; for(let i=0;i<n;i++){ con
 const OFFSETS=spiralOffsets(28,0.001);
 
 function addPointLabel(name,lat,lon,day,elev){
-  const color=dayColors[day]||'#333', bg=rgba(color,0.90);
+  const color=dayColors[day]||'#333', fg=(luminance(color)>160?"#000":"#fff"), bg=rgba(color,0.90);
   L.circleMarker([lat,lon],{radius:4,weight:2,color,fillColor:color,fillOpacity:1}).addTo(map);
   let finalLat=lat,finalLon=lon,placedPt=null;
   for(const [dlat,dlon] of OFFSETS){ const tLat=lat+dlat,tLon=lon+dlon; const ptScreen=map.latLngToLayerPoint([tLat,tLon]);
     if(!willOverlap(ptScreen)){ finalLat=tLat; finalLon=tLon; placedPt=ptScreen; break; } }
   if(!placedPt) placedPt=map.latLngToLayerPoint([finalLat,finalLon]); placed.push(placedPt);
-  const tagHtml=`<div class="chip chip--point dynfs" data-kind="point" style="background:${bg} !important;color:#fff !important;border-color:${color} !important;">${day} ${name}｜${elev} m</div>`;
-  const mk = L.marker([finalLat,finalLon],{icon:L.divIcon({className:'',html:tagHtml})}).addTo(map);
-  pointLabelRefs.push(mk);
+  const tagHtml=`<div class="chip chip--point" style="background:${bg} !important;color:#fff !important;border-color:${color} !important;">${day} ${name}｜${elev} m</div>`;
+  L.marker([finalLat,finalLon],{icon:L.divIcon({className:'',html:tagHtml})}).addTo(map);
 }
 
 function flagIcon(){
@@ -129,6 +130,7 @@ function flagIcon(){
   return L.divIcon({className:'', html:svg, iconSize:[22,22], iconAnchor:[11,20]});
 }
 
+// Build segments
 const segments=[], amapLinks=[]; let totalKm=0;
 for(let i=0;i<order.length-1;i++){
   const a=order[i], b=order[i+1]; const A=pt[a], B=pt[b];
@@ -139,49 +141,45 @@ for(let i=0;i<order.length-1;i++){
 }
 setTotals(totalKm,totalKm);
 
-// === Offline "nav-like" actual paths via Bezier curves (prebuilt) ===
-function bezier(p0, p1, p2, t){ const u=1-t; return [u*u*p0[0]+2*u*t*p1[0]+t*t*p2[0], u*u*p0[1]+2*u*t*p1[1]]; }
-function buildCurvedPolyline(A,B,curve=0.18, n=42){
-  const lat0=A.lat, lon0=A.lon, lat2=B.lat, lon2=B.lon;
-  const midLat=(lat0+lat2)/2, midLon=(lon0+lon2)/2;
-  const dx=lat2-lat0, dy=lon2-lon0;
-  const nx=-dy, ny=dx;
-  const len=Math.sqrt(nx*nx+ny*ny)||1;
-  const off=(curve)*Math.sqrt(dx*dx+dy*dy);
-  const cx=midLat + (nx/len)*off;
-  const cy=midLon + (ny/len)*off;
-  const pts=[]; for(let i=0;i<=n;i++){ const t=i/n; const [la,lo]=bezier([lat0,lon0],[cx,cy],[lat2,lon2],t); pts.push([la,lo]); }
-  return pts;
+// Initial viewport: center at start, vertical span ≈ 1000 km
+function setInitialViewport(){
+  const startName = points.find(p=>p[3]==="D1")[0];
+  const s = pt[startName];
+  const lat = s.lat, lon = s.lon;
+  const degLat = 1000/111; // ~9 degrees
+  const halfLat = degLat/2;
+  const size = map.getSize(); const aspect = size.x/Math.max(1,size.y);
+  const degLon = degLat * aspect / Math.max(0.2, Math.cos(lat*Math.PI/180)); // adjust by latitude
+  const halfLon = degLon/2;
+  const bounds = [[lat-halfLat, lon-halfLon],[lat+halfLat, lon+halfLon]];
+  map.fitBounds(bounds, {animate:false, padding:[10,10]});
+  map.panTo([lat, lon], {animate:false}); // keep center at start
+  // add flag at start
+  L.marker([lat, lon], {icon: flagIcon()}).addTo(map);
 }
-const actualPaths = segments.map(seg=> buildCurvedPolyline(seg.A, seg.B, 0.12, 44));
+map.whenReady(()=>{
+  points.forEach(([n,lat,lon,day,elev])=> addPointLabel(n,lat,lon,day,elev));
+  setInitialViewport();
+});
 
+// Drawers & caches
 let modeActual=true;
-const polyRefs=[], arrowRefs=[], labelRefs=[], checkRefs=[], pointLabelRefs=[];
+const polyRefs=[], arrowRefs=[], labelRefs=[], checkRefs=[];
 function clearPolylines(){
   polyRefs.forEach(pl=>{ if(pl){ map.removeLayer(pl); } });
   arrowRefs.forEach(ar=>{ if(ar){ map.removeLayer(ar); } });
   polyRefs.length=0; arrowRefs.length=0;
 }
-function arrowAtMid(latlngs, color){
-  const midIdx = Math.floor(latlngs.length/2);
-  const a = latlngs[midIdx-1], b = latlngs[midIdx+1] || latlngs[midIdx];
-  const ang = Math.atan2(b[0]-a[0], b[1]-a[1]) * 180/Math.PI;
-  const svg = `<svg width="20" height="20" viewBox="0 0 20 20" style="transform: rotate(${-(ang)}deg);">
-    <path d="M3 10 L13 10 M10 6 L14 10 L10 14" stroke="${color}" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-  </svg>`;
-  return L.marker(latlngs[midIdx], { icon: L.divIcon({className:'', html:svg, iconSize:[20,20], iconAnchor:[10,10]})});
-}
-
 function buildStraight(){
   clearPolylines();
   segments.forEach((seg,idx)=>{
-    const color=dayColors[seg.day]||'#333'; const bg=rgba(color,0.92);
+    const color=dayColors[seg.day]||'#333'; const fg=(luminance(color)>160?"#000":"#fff"); const bg=rgba(color,0.92);
     const line=L.polyline([[seg.A.lat,seg.A.lon],[seg.B.lat,seg.B.lon]],{color,weight:5,opacity:0.95}).addTo(map).bindTooltip("高德导航（点击打开）",{sticky:true});
     line.on('click',()=> window.open(amapLinks[idx],'_blank'));
     polyRefs[idx]=line;
     if(!labelRefs[idx]){
       const mid=[(seg.A.lat+seg.B.lat)/2,(seg.A.lon+seg.B.lon)/2];
-      const html=`<div class="chip dynfs" data-kind="seg" id="seglabel_${idx}" style="background:${bg} !important;color:#fff !important;border-color:${color} !important;">
+      const html=`<div class="chip" id="seglabel_${idx}" style="background:${bg} !important;color:${fg} !important;border-color:${color} !important;">
         <input type="checkbox" class="segchk" id="segcb_${idx}" data-idx="${idx}" data-dist="${seg.dist}" />
         <label for="segcb_${idx}" style="margin:0;cursor:pointer;">${seg.day} · ${seg.from} → ${seg.to} · ${seg.dist} km</label>
       </div>`;
@@ -190,34 +188,66 @@ function buildStraight(){
       setTimeout(()=>{ const el=document.getElementById(`segcb_${idx}`); if(el) checkRefs[idx]=el; },0);
     }
   });
-  applySequentialRules(); updateVisualsFromChecks(); applyZoomFont();
+  applySequentialRules(); updateVisualsFromChecks();
 }
-function buildActual(){
+
+const OSRM_CACHE_KEY = "osrm_cache_v1";
+function getCache(){ try{ return JSON.parse(localStorage.getItem(OSRM_CACHE_KEY)||"{}"); }catch(e){ return {}; } }
+function setCache(obj){ localStorage.setItem(OSRM_CACHE_KEY, JSON.stringify(obj)); }
+
+async function fetchOsrmRoute(A, B){
+  const key = `${A.lat.toFixed(5)},${A.lon.toFixed(5)}_${B.lat.toFixed(5)},${B.lon.toFixed(5)}`;
+  const cache = getCache();
+  if(cache[key]) return cache[key];
+  const url = `https://router.project-osrm.org/route/v1/driving/${A.lon},${A.lat};${B.lon},${B.lat}?overview=full&geometries=geojson`;
+  const resp = await fetch(url);
+  if(!resp.ok){ throw new Error("OSRM 请求失败"); }
+  const data = await resp.json();
+  const coords = data.routes && data.routes[0] && data.routes[0].geometry && data.routes[0].geometry.coordinates;
+  if(!coords) throw new Error("OSRM 无坐标");
+  const latlngs = coords.map(([lon,lat])=>[lat,lon]);
+  cache[key] = latlngs;
+  setCache(cache);
+  return latlngs;
+}
+
+async function buildActual(){
   clearPolylines();
-  segments.forEach((seg,idx)=>{
+  for(let idx=0; idx<segments.length; idx++){
+    const seg = segments[idx];
     const color=dayColors[seg.day]||'#333';
-    const latlngs = actualPaths[idx];
+    let latlngs = null;
+    try {
+      latlngs = await fetchOsrmRoute(seg.A, seg.B);
+    } catch(e){
+      latlngs = [[seg.A.lat,seg.A.lon],[seg.B.lat,seg.B.lon]]; // fallback
+    }
     const line=L.polyline(latlngs,{color,weight:5,opacity:0.95}).addTo(map).bindTooltip("高德导航（点击打开）",{sticky:true});
     line.on('click',()=> window.open(amapLinks[idx],'_blank'));
     polyRefs[idx]=line;
-    const arrow = arrowAtMid(latlngs, color).addTo(map);
-    arrowRefs[idx]=arrow;
+    const decorator = L.polylineDecorator(line, {
+      patterns: [
+        { offset: '50%', repeat: 0, symbol: L.Symbol.arrowHead({ pixelSize: 12, polygon: false, pathOptions: { stroke:true, color: color, weight: 3 }}) }
+      ]
+    }).addTo(map);
+    arrowRefs[idx] = decorator;
     if(checkRefs[idx] && checkRefs[idx].checked){ if(line._path){ line._path.style.filter="saturate(35%) brightness(0.95)"; line._path.style.opacity="0.45"; } }
-  });
-  applyZoomFont();
+  }
 }
-document.getElementById('toggleRoute').addEventListener('click', ()=>{
+
+// Toggle button (default: 导航路径)
+document.getElementById('toggleRoute').addEventListener('click', async ()=>{
   modeActual = !modeActual;
   if(modeActual){
-    buildActual();
-    document.getElementById('toggleRoute').innerHTML='切换为直线连线<span class="hint">（当前：离线导航样式）</span>';
+    await buildActual();
+    document.getElementById('toggleRoute').innerHTML='切换为直线连线<span class="hint">（当前：导航路径）</span>';
   } else {
     buildStraight();
-    document.getElementById('toggleRoute').innerHTML='切换为离线导航样式<span class="hint">（当前：直线）</span>';
+    document.getElementById('toggleRoute').innerHTML='切换为导航路径<span class="hint">（当前：直线）</span>';
   }
 });
 
-const STORAGE_KEY="chuan_gan_route_checked_indices_v11";
+const STORAGE_KEY="chuan_gan_route_checked_indices_v9";
 function persistState(){ const arr=checkRefs.map(el=> el&&el.checked?1:0); localStorage.setItem(STORAGE_KEY,JSON.stringify(arr)); }
 function loadState(){ try{ const raw=localStorage.getItem(STORAGE_KEY); if(!raw) return null; const arr=JSON.parse(raw); return Array.isArray(arr)?arr.map(v=>v?1:0):null; }catch(e){ return null; } }
 
@@ -263,31 +293,18 @@ document.getElementById('resetBtn').addEventListener('click',()=>{
   updateVisualsFromChecks();
 });
 
-function applyZoomFont(){
-  const z = map.getZoom();
-  const scale = Math.max(0.5, Math.min(1.6, (z-6)*0.18 + 1));
-  const hideThreshold = 5;
-  document.querySelectorAll('.dynfs').forEach(el=>{
-    if(z <= hideThreshold){ el.style.display = 'none'; }
-    else { el.style.display = 'inline-flex'; el.style.transform = `scale(${scale})`; el.style.transformOrigin = 'left center'; }
-  });
-}
-map.on('zoomend', applyZoomFont);
-
-// Init
-(function init(){
-  points.forEach(([n,lat,lon,day,elev])=> addPointLabel(n,lat,lon,day,elev));
-  const startName = points.find(p=>p[3]==="D1")[0]; const s = pt[startName];
-  L.marker([s.lat, s.lon], {icon: flagIcon()}).addTo(map);
+// Build default view with 导航路径 (and cache), then labels/checkboxes
+(async function init(){
+  // Build labels checkboxes on straight first so DOM exists
   buildStraight();
-  buildActual(); // default show offline "nav-like" paths
-  applyZoomFont();
+  // Then replace with actual navigation routes (with cache)
+  await buildActual();
 })();
 </script>
 </body>
 </html>
 """
-path = "/mnt/data/川甘环线-离线导航样式-方向箭头-文字缩放-起点近景.html"
+path = "/mnt/data/川甘环线-导航路径-方向箭头-起点居中-1000km视野.html"
 with open(path, "w", encoding="utf-8") as f:
     f.write(html)
 path
