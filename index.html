@@ -1,30 +1,24 @@
-# Create two files:
-# 1) An HTML that is 100% offline, does NOT follow the live location, and is ready to accept pre-embedded true nav shapes via a JSON blob.
-# 2) A one-click Node script that fetches OSRM routes for all segments and writes a NEW HTML with the shapes embedded (so the final page loads instantly without hitting the network).
-#
-# After you run the node script locally, you'll get: 川甘环线-内嵌真几何-最终版.html
 
-html = r"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>川甘环线（内置路径·离线首开·实时定位不跟随）</title>
+<title>川甘环线（直线连线 · 一键定位到我）</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
 <style>
   :root { --chip-radius: 10px; --chip-shadow: 0 2px 6px rgba(0,0,0,0.18); --chip-font: 12px; --chip-weight: 800;
           --sysfont: system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans","Liberation Sans",sans-serif; }
   html, body, #map { height: 100%; margin: 0; font-family: var(--sysfont); }
-  .legend { position: absolute; right: 10px; top: 10px; z-index: 1001; background: rgba(255,255,255,0.94);
+  .legend { position: absolute; right: 10px; top: 10px; z-index: 1001; background: rgba(255,255,255,0.95);
             padding: 8px 10px; border:1px solid #999; border-radius:10px; font-size: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.15); }
   .legend .row { display:flex; align-items:center; gap:8px; margin:3px 0; } .legend .swatch { width:14px; height:14px; border-radius:3px; border:1px solid #666; }
-  .overlay { position: absolute; left: 10px; top: 10px; z-index: 1001; background: rgba(255,255,255,0.94);
+  .overlay { position: absolute; left: 10px; top: 10px; z-index: 1001; background: rgba(255,255,255,0.95);
              padding: 10px 14px; border: 1px solid #999; border-radius: 10px; font-size: 13px; box-shadow: 0 2px 6px rgba(0,0,0,0.15); }
   .overlay .row { display:flex; align-items:center; gap:10px; }
   .chip { border-radius: var(--chip-radius) !important; box-shadow: var(--chip-shadow) !important; border: 1px solid rgba(0,0,0,0.35) !important;
           -webkit-backface-visibility: hidden; transform: translateZ(0); display: inline-flex; align-items: center; gap: 8px;
           padding: 6px 10px; font-size: var(--chip-font); font-weight: var(--chip-weight); line-height: 1; white-space: nowrap; font-family: var(--sysfont);
-          background: rgba(0,0,0,0.0); /* default transparent; will be colored inline */ backdrop-filter: blur(1px); }
+          backdrop-filter: blur(1px); }
   .chip--point { padding: 4px 8px; }
   .leaflet-div-icon { background: transparent !important; border: 0 !important; }
   .flag-svg { width: 22px; height: 22px; transform: translate(0,-18px); }
@@ -35,8 +29,7 @@ html = r"""<!DOCTYPE html>
   .dimmed { filter: saturate(35%) brightness(0.95); opacity: 0.5; }
   .right-controls { position:absolute; right:10px; bottom:10px; z-index:1002; display:flex; gap:10px; flex-direction:column; align-items:flex-end; }
   .btn { background:#111; color:#fff; padding:10px 12px; border-radius:12px; border:1px solid #333; cursor:pointer; font-weight:800; font-size:12px; box-shadow:0 2px 6px rgba(0,0,0,.2); }
-  .btn .hint { font-weight:600; opacity:.8; margin-left:6px; }
-  .reset-btn { background:#f43f5e; color:#fff; padding:10px 12px; border-radius:12px; border:1px solid #b91c1c; cursor:pointer; font-weight:800; font-size:12px; box-shadow:0 2px 6px rgba(0,0,0,.15); }
+  .badge { background:#111; color:#fff; padding:6px 10px; border-radius:10px; font-weight:800; font-size:12px; border:1px solid #333; box-shadow:0 2px 6px rgba(0,0,0,.2); }
 </style>
 </head>
 <body>
@@ -45,7 +38,7 @@ html = r"""<!DOCTYPE html>
   <div class="row">
     <div style="font-weight:800;font-size:14px;">总里程：<span id="total_km">--</span> km</div>
     <div style="font-weight:700;">剩余：<span id="remain_km">--</span> km</div>
-    <button id="resetBtn" class="reset-btn" title="重置所有勾选">重置</button>
+    <button id="resetBtn" class="btn" title="重置所有勾选">重置</button>
   </div>
 </div>
 <div class="legend">
@@ -61,20 +54,13 @@ html = r"""<!DOCTYPE html>
 </div>
 
 <div class="right-controls">
-  <button id="toggleRoute" class="btn">切换为直线连线<span class="hint">（当前：内置路径）</span></button>
-  <button id="locBtn" class="btn">开启定位<span class="hint">（跟随：关）</span></button>
+  <button id="locBtn" class="btn">定位到我</button>
 </div>
-
-<!-- This JSON will be replaced by the Node script with REAL nav shapes per segment (array of [lat,lon]) -->
-<script id="nav-embed" type="application/json">
-{ "paths": [] }
-</script>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <script>
 const dayColors = { D1:"#d62728", D2:"#1f77b4", D3:"#2ca02c", D4:"#ff7f0e", D5:"#9467bd", D6:"#8c564b", D7:"#e377c2", D8:"#7f7f7f" };
 function rgba(hex,a=0.55){ const c=hex.replace('#',''); const r=parseInt(c.slice(0,2),16), g=parseInt(c.slice(2,4),16), b=parseInt(c.slice(4,6),16); return `rgba(${r},${g},${b},${a})`; }
-
 const points = [
   ["成都",30.658,104.064,"D1",500],
   ["松潘",32.6386,103.5975,"D1",2850],
@@ -106,7 +92,7 @@ const points = [
 const order = ["成都","松潘","川主寺镇","九寨沟","神仙池","迭部","扎尕那","洛克之路","米拉日巴佛阁","合作","夏河","拉卜楞寺","桑科草原","碌曲","郎木寺","唐克","阿坝","各莫寺","莲宝叶则","阿坝（返）","观音桥","玉科草原","党岭","丹巴","巴郎山","成都（终）"];
 const pt = {}; points.forEach(([n,lat,lon,day,elev])=>pt[n]={lat,lon,day,elev});
 
-function haversineKm(lat1,lon1,lat2,lon2){ const R=6371, dLat=(lat2-lat1)*Math.PI/180, dLon=(lon2-lon1)*Math.PI/180;
+function haversineKm(lat1,lon1,lat2,lon2){ const R=6371, dLat=(lat2-lat1)*Math.PI/180, dLon=(lat2-lon1)*Math.PI/180;
   const a=Math.sin(dLat/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2; return 2*R*Math.atan2(Math.sqrt(a),Math.sqrt(1-a)); }
 function roadKmApprox(lat1,lon1,lat2,lon2){ return Math.round(haversineKm(lat1,lon1,lat2,lon2)*1.35); }
 
@@ -127,10 +113,11 @@ function addPointLabel(name,lat,lon,day,elev){
   for(const [dlat,dlon] of OFFSETS){ const tLat=lat+dlat,tLon=lon+dlon; const ptScreen=map.latLngToLayerPoint([tLat,tLon]);
     if(!willOverlap(ptScreen)){ finalLat=tLat; finalLon=tLon; placedPt=ptScreen; break; } }
   if(!placedPt) placedPt=map.latLngToLayerPoint([finalLat,finalLon]); placed.push(placedPt);
-  const tagHtml=`<div class="chip chip--point dynfs" data-kind="point" style="background:${bg} !important;color:#fff !important;border-color:${color} !important;">${day} ${name}｜${elev} m</div>`;
+  const tagHtml=`<div class="chip chip--point dynfs" style="background:${bg} !important;color:#fff !important;border-color:${color} !important;">${day} ${name}｜${elev} m</div>`;
   L.marker([finalLat,finalLon],{icon:L.divIcon({className:'',html:tagHtml})}).addTo(map);
 }
 
+// 起点旗帜
 function flagIcon(){
   const svg=`<svg class="flag-svg" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
     <defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#ff4d4f"/><stop offset="1" stop-color="#d32029"/></linearGradient></defs>
@@ -141,7 +128,7 @@ function flagIcon(){
   return L.divIcon({className:'', html:svg, iconSize:[22,22], iconAnchor:[11,20]});
 }
 
-// Segments & Amap
+// 段数据
 const segments=[], amapLinks=[]; let totalKm=0;
 for(let i=0;i<order.length-1;i++){
   const a=order[i], b=order[i+1]; const A=pt[a], B=pt[b];
@@ -152,73 +139,25 @@ for(let i=0;i<order.length-1;i++){
 }
 setTotals(totalKm,totalKm);
 
-// Embedded true nav paths (to be filled by script); fallback: smooth curves
-function bez(p0,p1,p2,t){ const u=1-t; return [u*u*p0[0]+2*u*t*p1[0]+t*t*p2[0], u*u*p0[1]+2*u*t*p1[1]]; }
-function buildCurve(A,B,curve=0.10,n=46){
-  const lat0=A.lat, lon0=A.lon, lat2=B.lat, lon2=B.lon;
-  const midLat=(lat0+lat2)/2, midLon=(lon0+lon2)/2, dx=lat2-lat0, dy=lon2-lon0, nx=-dy, ny=dx;
-  const len=Math.sqrt(nx*nx+ny*ny)||1, off=curve*Math.sqrt(dx*dx+dy*dy), cx=midLat+(nx/len)*off, cy=midLon+(ny/len)*off;
-  const pts=[]; for(let i=0;i<=n;i++){ const t=i/n; const [la,lo]=bez([lat0,lon0],[cx,cy],[lat2,lon2],t); pts.push([la,lo]); } return pts;
-}
-const EMBED = (()=>{ try{ return JSON.parse(document.getElementById('nav-embed').textContent||'{}'); }catch(e){ return {}; } })();
-const actualPaths = (EMBED.paths && EMBED.paths.length===segments.length)
-  ? EMBED.paths
-  : segments.map(seg => buildCurve(seg.A, seg.B, 0.10, 46));
-
-// Drawers
-let modeActual=true;
-const polyRefs=[], arrowRefs=[], labelRefs=[], checkRefs=[];
-function clearPolys(){
-  polyRefs.forEach(pl=>{ if(pl){ map.removeLayer(pl); } });
-  arrowRefs.forEach(ar=>{ if(ar){ map.removeLayer(ar); } });
-  polyRefs.length=0; arrowRefs.length=0;
-}
-function arrowAtMid(latlngs, color){
-  const midIdx=Math.floor(latlngs.length/2);
-  const a=latlngs[midIdx-1]||latlngs[0], b=latlngs[midIdx+1]||latlngs[latlngs.length-1];
-  const ang=Math.atan2(b[0]-a[0], b[1]-a[1])*180/Math.PI;
-  const svg=`<svg width="20" height="20" viewBox="0 0 20 20" style="transform: rotate(${-(ang)}deg);">
-    <path d="M3 10 L13 10 M10 6 L14 10 L10 14" stroke="${color}" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
-  return L.marker(latlngs[midIdx], {icon:L.divIcon({className:'', html:svg, iconSize:[20,20], iconAnchor:[10,10]})});
-}
-function buildStraight(){
-  clearPolys();
-  segments.forEach((seg,idx)=>{
-    const color=dayColors[seg.day], bg=rgba(color,0.55);
-    const line=L.polyline([[seg.A.lat,seg.A.lon],[seg.B.lat,seg.B.lon]],{color,weight:5,opacity:0.95}).addTo(map).bindTooltip("高德导航（点击打开）",{sticky:true});
-    line.on('click',()=> window.open(amapLinks[idx],'_blank'));
-    polyRefs[idx]=line;
-    if(!labelRefs[idx]){
-      const mid=[(seg.A.lat+seg.B.lat)/2,(seg.A.lon+seg.B.lon)/2];
-      const html=`<div class="chip dynfs" id="seglabel_${idx}" style="background:${bg} !important;color:#fff !important;border-color:${color} !important;">
-        <input type="checkbox" class="segchk" id="segcb_${idx}" data-idx="${idx}" data-dist="${seg.dist}" />
-        <label for="segcb_${idx}" style="margin:0;cursor:pointer;">${seg.day} · ${seg.from} → ${seg.to} · ${seg.dist} km</label>
-      </div>`;
-      const marker=L.marker(mid,{icon:L.divIcon({className:'',html})}).addTo(map);
-      labelRefs[idx]=marker;
-      setTimeout(()=>{ const el=document.getElementById(`segcb_${idx}`); if(el) checkRefs[idx]=el; },0);
-    }
-  });
-  seqRules(); visuals(); zoomFonts();
-}
-function buildActual(){
-  clearPolys();
-  segments.forEach((seg,idx)=>{
-    const color=dayColors[seg.day]; const latlngs=actualPaths[idx];
-    const line=L.polyline(latlngs,{color,weight:5,opacity:0.95}).addTo(map).bindTooltip("高德导航（点击打开）",{sticky:true});
-    line.on('click',()=> window.open(amapLinks[idx],'_blank'));
-    polyRefs[idx]=line; arrowRefs[idx]=arrowAtMid(latlngs,color).addTo(map);
-    if(checkRefs[idx] && checkRefs[idx].checked){ if(line._path){ line._path.style.filter="saturate(35%) brightness(0.95)"; line._path.style.opacity="0.45"; } }
-  });
-  zoomFonts();
-}
-document.getElementById('toggleRoute').addEventListener('click', ()=>{
-  modeActual=!modeActual;
-  if(modeActual){ buildActual(); document.getElementById('toggleRoute').innerHTML='切换为直线连线<span class="hint">（当前：内置路径）</span>'; }
-  else{ buildStraight(); document.getElementById('toggleRoute').innerHTML='切换为内置路径<span class="hint">（当前：直线）</span>'; }
+// 绘制直线 + 段标签（顺序勾选）
+const polyRefs=[], labelRefs=[], checkRefs=[];
+segments.forEach((seg,idx)=>{
+  const color=dayColors[seg.day]; const bg=rgba(color,0.55);
+  const line=L.polyline([[seg.A.lat,seg.A.lon],[seg.B.lat,seg.B.lon]],{color,weight:5,opacity:0.95}).addTo(map)
+             .bindTooltip("高德导航（点击打开）",{sticky:true});
+  line.on('click',()=> window.open(amapLinks[idx],'_blank'));
+  polyRefs[idx]=line;
+  const mid=[(seg.A.lat+seg.B.lat)/2,(seg.A.lon+seg.B.lon)/2];
+  const html=`<div class="chip dynfs" id="seglabel_${idx}" style="background:${bg} !important;color:#fff !important;border-color:${color} !important;">
+      <input type="checkbox" class="segchk" id="segcb_${idx}" data-idx="${idx}" data-dist="${seg.dist}" />
+      <label for="segcb_${idx}" style="margin:0;cursor:pointer;">${seg.day} · ${seg.from} → ${seg.to} · ${seg.dist} km</label>
+    </div>`;
+  const marker=L.marker(mid,{icon:L.divIcon({className:'',html})}).addTo(map);
+  labelRefs[idx]=marker;
+  setTimeout(()=>{ const el=document.getElementById(`segcb_${idx}`); if(el) checkRefs[idx]=el; },0);
 });
 
-// 顺序勾选/持久化/重置
+// 顺序/持久化/重置
 const STORAGE_KEY="chuan_gan_route_checked_indices_v15";
 function save(){ const arr=checkRefs.map(el=> el&&el.checked?1:0); localStorage.setItem(STORAGE_KEY,JSON.stringify(arr)); }
 function load(){ try{ const raw=localStorage.getItem(STORAGE_KEY); if(!raw) return null; const arr=JSON.parse(raw); return Array.isArray(arr)?arr.map(v=>v?1:0):null; }catch(e){ return null; } }
@@ -239,7 +178,9 @@ function visuals(){
       if(m){ const nd=m.getElement(); if(nd) nd.classList.remove('dimmed'); } }
   });
   const sum=segments.reduce((a,s)=>a+s.dist,0);
-  setTotals(sum, Math.max(0,sum-checked));
+  const remain=Math.max(0,sum-checked);
+  document.getElementById('total_km').textContent=sum;
+  document.getElementById('remain_km').textContent=remain;
 }
 function restore(){
   const arr=load(); if(!arr){ seqRules(); visuals(); return; }
@@ -247,9 +188,10 @@ function restore(){
   seqRules(); visuals();
 }
 document.addEventListener('change', e=>{
-  const t=e.target; if(t && t.classList.contains('segchk')){
-    const idx=parseInt(t.getAttribute('data-idx'),10); const prev=idx-1;
-    if(prev>=0 && (!checkRefs[prev] || !checkRefs[prev].checked)){ t.checked=false; return; }
+  const t=e.target;
+  if(t && t.classList.contains('segchk')){
+    const idx=parseInt(t.getAttribute('data-idx'),10);
+    const prev=idx-1; if(prev>=0 && (!checkRefs[prev] || !checkRefs[prev].checked)){ t.checked=false; return; }
     if(!t.checked){ for(let j=idx+1;j<checkRefs.length;j++){ if(checkRefs[j]) checkRefs[j].checked=false; } }
     seqRules(); visuals(); save();
   }
@@ -267,115 +209,36 @@ function zoomFonts(){
 }
 map.on('zoomend', zoomFonts);
 
-// 实时定位（不跟随）
-let watchId=null, meMarker=null, meCircle=null;
-document.getElementById('locBtn').addEventListener('click', ()=>{
-  if(watchId==null){
-    if(!navigator.geolocation){ alert('当前浏览器不支持定位'); return; }
-    document.getElementById('locBtn').innerHTML='关闭定位<span class="hint">（跟随：关）</span>';
-    watchId = navigator.geolocation.watchPosition(pos=>{
-      const {latitude, longitude, accuracy} = pos.coords;
-      if(!meMarker){
-        const dot=`<div style="width:14px;height:14px;border-radius:50%;background:#22c55e;border:2px solid #fff;box-shadow:0 0 0 6px rgba(34,197,94,0.15)"></div>`;
-        meMarker=L.marker([latitude,longitude],{icon:L.divIcon({className:'', html:dot, iconSize:[14,14], iconAnchor:[7,7]})}).addTo(map);
-        meCircle=L.circle([latitude,longitude],{radius:accuracy||30,color:'#22c55e',weight:1,fillColor:'#22c55e',fillOpacity:0.1}).addTo(map);
-      } else {
-        meMarker.setLatLng([latitude,longitude]); meCircle.setLatLng([latitude,longitude]); meCircle.setRadius(accuracy||30);
-      }
-    }, err=>{
-      alert('定位失败：'+err.message); if(watchId){ navigator.geolocation.clearWatch(watchId); watchId=null; }
-      if(meMarker){ map.removeLayer(meMarker); meMarker=null; } if(meCircle){ map.removeLayer(meCircle); meCircle=null; }
-      document.getElementById('locBtn').innerHTML='开启定位<span class="hint">（跟随：关）</span>';
-    }, {enableHighAccuracy:true, timeout:15000, maximumAge:5000});
-  } else {
-    navigator.geolocation.clearWatch(watchId); watchId=null;
-    if(meMarker){ map.removeLayer(meMarker); meMarker=null; } if(meCircle){ map.removeLayer(meCircle); meCircle=null; }
-    document.getElementById('locBtn').innerHTML='开启定位<span class="hint">（跟随：关）</span>';
-  }
-});
+// 起点与地点标签
+points.forEach(([n,lat,lon,day,elev])=> addPointLabel(n,lat,lon,day,elev));
+const startName=points.find(p=>p[3]==="D1")[0]; const s=pt[startName];
+L.marker([s.lat,s.lon],{icon:flagIcon()}).addTo(map);
+zoomFonts(); restore();
 
-// Init
-(function init(){
-  points.forEach(([n,lat,lon,day,elev])=> addPointLabel(n,lat,lon,day,elev));
-  const startName=points.find(p=>p[3]==="D1")[0]; const s=pt[startName];
-  L.marker([s.lat,s.lon],{icon:flagIcon()}).addTo(map);
-  buildStraight(); buildActual(); zoomFonts();
-})();
+// —— 新增：一键“定位到我”（一次性） ——
+let meMarker=null, meCircle=null;
+document.getElementById('locBtn').addEventListener('click', ()=>{
+  if(!navigator.geolocation){ alert('当前浏览器不支持定位'); return; }
+  navigator.geolocation.getCurrentPosition(pos=>{
+    const {latitude, longitude, accuracy} = pos.coords;
+    if(!meMarker){
+      const html=`<div style="width:14px;height:14px;border-radius:50%;background:#2563eb;border:2px solid #fff;box-shadow:0 0 0 6px rgba(37,99,235,0.15)"></div>`;
+      meMarker=L.marker([latitude,longitude],{icon:L.divIcon({className:'', html, iconSize:[14,14], iconAnchor:[7,7]})}).addTo(map);
+      meCircle=L.circle([latitude,longitude],{radius:accuracy||30,color:'#2563eb',weight:1,fillColor:'#2563eb',fillOpacity:0.12}).addTo(map);
+    }else{
+      meMarker.setLatLng([latitude,longitude]);
+      meCircle.setLatLng([latitude,longitude]); meCircle.setRadius(accuracy||30);
+    }
+    map.panTo([latitude, longitude]);
+  }, err=>{
+    alert('定位失败：'+err.message);
+  }, {enableHighAccuracy:true, timeout:12000, maximumAge:60000});
+});
 </script>
 </body>
 </html>
 """
-
-node = r"""// build_nav_embed.mjs
-// Usage:
-//   1) Install Node 18+
-//   2) Run:  node build_nav_embed.mjs
-//   3) It will write: 川甘环线-内嵌真几何-最终版.html
-
-import fs from 'node:fs/promises';
-
-const SRC = "川甘环线-内置路径-离线首开-实时定位不跟随.html";
-const OUT = "川甘环线-内嵌真几何-最终版.html";
-
-const order = ["成都","松潘","川主寺镇","九寨沟","神仙池","迭部","扎尕那","洛克之路","米拉日巴佛阁","合作","夏河","拉卜楞寺","桑科草原","碌曲","郎木寺","唐克","阿坝","各莫寺","莲宝叶则","阿坝（返）","观音桥","玉科草原","党岭","丹巴","巴郎山","成都（终）"];
-const points = new Map([
-  ["成都",[30.658,104.064]],["松潘",[32.6386,103.5975]],["川主寺镇",[32.77682,103.61733]],["九寨沟",[33.2,103.9]],["神仙池",[33.25,103.65]],
-  ["迭部",[34.056,103.2219]],["扎尕那",[34.23595,103.18631]],["洛克之路",[34.248,103.18]],["米拉日巴佛阁",[35.00673,102.91556]],["合作",[34.99837,102.90999]],
-  ["夏河",[35.20256,102.52173]],["拉卜楞寺",[35.19306,102.50694]],["桑科草原",[35.11477,102.42877]],["碌曲",[34.59042,102.48892]],["郎木寺",[34.09139,102.63639]],
-  ["唐克",[33.4106,102.46754]],["阿坝",[32.90502,101.70192]],["各莫寺",[32.98,101.38]],["莲宝叶则",[33.233,101.08]],["阿坝（返）",[32.90502,101.70192]],
-  ["观音桥",[31.79968,101.65295]],["玉科草原",[31.28858,101.17983]],["党岭",[30.8521,101.9338]],["丹巴",[30.877,101.886]],["巴郎山",[30.889,102.869]],["成都（终）",[30.658,104.064]],
-]);
-
-function lonlat(name){ const [lat,lon] = points.get(name); return [lon,lat]; }
-function segs(){
-  const arr=[]; for(let i=0;i<order.length-1;i++){ const a=order[i], b=order[i+1]; arr.push([a,b]); } return arr;
-}
-
-async function fetchOSRM(A,B){
-  const [lon1,lat1]=lonlat(A); const [lon2,lat2]=lonlat(B);
-  const url = `https://router.project-osrm.org/route/v1/driving/${lon1},${lat1};${lon2},${lat2}?overview=full&geometries=geojson`;
-  for(let i=0;i<3;i++){
-    try{
-      const r = await fetch(url);
-      if(!r.ok) throw new Error(`Bad status ${r.status}`);
-      const j = await r.json();
-      const coords = j?.routes?.[0]?.geometry?.coordinates;
-      if(!coords) throw new Error("No geometry");
-      return coords.map(([lng,lat])=>[lat,lng]);
-    }catch(e){
-      if(i===2) throw e;
-      await new Promise(res=>setTimeout(res, 800));
-    }
-  }
-}
-
-async function main(){
-  console.log("Fetching real navigation shapes…");
-  const pairs = segs();
-  const results = [];
-  for(const [A,B] of pairs){
-    const ll = await fetchOSRM(A,B);
-    results.push(ll);
-    console.log(`OK: ${A} -> ${B} (${ll.length} pts)`);
-    await new Promise(res=>setTimeout(res, 200)); // be nice
-  }
-  const embed = { paths: results };
-  let html = await fs.readFile(SRC, 'utf8');
-  const RE = /<script id="nav-embed"[^>]*>[\s\S]*?<\/script>/m;
-  html = html.replace(RE, `<script id="nav-embed" type="application/json">\n${JSON.stringify(embed)}\n</script>`);
-  await fs.writeFile(OUT, html, 'utf8');
-  console.log(`Done → ${OUT}`);
-}
-
-main().catch(err=>{ console.error(err); process.exit(1); });
-"""
-
-html_path = "/mnt/data/川甘环线-内置路径-离线首开-实时定位不跟随.html"
-node_path = "/mnt/data/build_nav_embed.mjs"
-
-with open(html_path, "w", encoding="utf-8") as f:
+path = "/mnt/data/川甘环线-直线连线-一键定位到我.html"
+with open(path, "w", encoding="utf-8") as f:
     f.write(html)
-with open(node_path, "w", encoding="utf-8") as f:
-    f.write(node)
-
-html_path, node_path
+path
