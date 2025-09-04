@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>川甘环线（K0累计里程 · 同色导航按钮 · 无校准）</title>
+<title>川甘环线（K0累计 · 同色导航按钮 · 图注修正里程）</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
 <style>
   :root { --chip-radius: 10px; --chip-shadow: 0 2px 6px rgba(0,0,0,0.18); --chip-font: 12px; --chip-weight: 800;
@@ -15,12 +15,12 @@
   .overlay { position: absolute; left: 10px; top: 10px; z-index: 1001; background: rgba(255,255,255,0.95);
              padding: 10px 14px; border: 1px solid #999; border-radius: 10px; font-size: 13px; box-shadow: 0 2px 6px rgba(0,0,0,0.15); }
   .overlay .row { display:flex; align-items:center; gap:10px; }
-  .chip { border-radius: var(--chip-radius) !important; box-shadow: var(--chip-shadow) !important; border: 1px solid rgba(0,0,0,0.35) !important;
+  .chip { border-radius: var(--chip-radius) !important; box-shadow: var(--chip-shadow) !重要; border: 1px solid rgba(0,0,0,0.35) !重要;
           -webkit-backface-visibility: hidden; transform: translateZ(0); display: inline-flex; align-items: center; gap: 8px;
           padding: 6px 10px; font-size: var(--chip-font); font-weight: var(--chip-weight); line-height: 1; white-space: nowrap; font-family: var(--sysfont);
           backdrop-filter: blur(1px); }
   .chip--point { padding: 4px 8px; }
-  .leaflet-div-icon { background: transparent !important; border: 0 !important; }
+  .leaflet-div-icon { background: transparent !重要; border: 0 !重要; }
   .flag-svg { width: 22px; height: 22px; transform: translate(0,-18px); }
   .segchk { appearance: none; -webkit-appearance: none; width: 16px; height: 16px; border-radius: 4px; border: 2px solid rgba(255,255,255,0.9);
             outline: none; display: inline-block; position: relative; cursor: pointer; background: rgba(255,255,255,0.25); }
@@ -93,6 +93,9 @@ const points = [
 const order = ["成都","松潘","川主寺镇","九寨沟","神仙池","迭部","扎尕那","洛克之路","米拉日巴佛阁","合作","夏河","拉卜楞寺","桑科草原","碌曲","郎木寺","唐克","阿坝","各莫寺","莲宝叶则","阿坝（返）","观音桥","玉科草原","党岭","丹巴","巴郎山","成都（终）"];
 const pt = {}; points.forEach(([n,lat,lon,day,elev])=>pt[n]={lat,lon,day,elev});
 
+// 覆盖的图注公里数（与上面 order 的相邻段一一对应，共25段）→ 总计约 2224 km
+const overrideKm = [320,17,75,70,200,35,8,120,2,63,2,12,65,85,120,120,35,90,95,200,60,110,50,95,175];
+
 function haversineKm(lat1,lon1,lat2,lon2){ const R=6371, dLat=(lat2-lat1)*Math.PI/180, dLon=(lat2-lon1)*Math.PI/180;
   const a=Math.sin(dLat/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2; return 2*R*Math.atan2(Math.sqrt(a),Math.sqrt(1-a)); }
 function roadKmGuess(lat1,lon1,lat2,lon2){ const h=haversineKm(lat1,lon1,lat2,lon2); return Math.round(h * 1.55); }
@@ -114,7 +117,7 @@ function addPointLabel(name,lat,lon,day,elev){
   for(const [dlat,dlon] of OFFSETS){ const tLat=lat+dlat,tLon=lon+dlon; const ptScreen=map.latLngToLayerPoint([tLat,tLon]);
     if(!willOverlap(ptScreen)){ finalLat=tLat; finalLon=tLon; placedPt=ptScreen; break; } }
   if(!placedPt) placedPt=map.latLngToLayerPoint([finalLat,finalLon]); placed.push(placedPt);
-  const tagHtml=`<div class="chip chip--point dynfs" style="background:${bg} !important;color:#fff !important;border-color:${color} !important;">${day} ${name}｜${elev} m</div>`;
+  const tagHtml=`<div class="chip chip--point dynfs" style="background:${bg} !important;color:#fff !重要;border-color:${color} !重要;">${day} ${name}｜${elev} m</div>`;
   L.marker([finalLat,finalLon],{icon:L.divIcon({className:'',html:tagHtml})}).addTo(map);
 }
 
@@ -128,17 +131,19 @@ function flagIcon(){
   return L.divIcon({className:'', html:svg, iconSize:[22,22], iconAnchor:[11,20]});
 }
 
-// 段与导航链接
+// 构建段（使用 overrideKm 覆盖估算值）
 const segments=[], amapLinks=[];
 for(let i=0;i<order.length-1;i++){
   const a=order[i], b=order[i+1]; const A=pt[a], B=pt[b];
-  const guess=roadKmGuess(A.lat,A.lon,B.lat,B.lon); const day=A.day;
+  const guess=roadKmGuess(A.lat,A.lon,B.lat,B.lon);
+  const distKm = (overrideKm[i]!==undefined && overrideKm[i]>0) ? overrideKm[i] : guess;
+  const day=A.day;
   const amap=`https://uri.amap.com/navigation?from=${A.lon},${A.lat},${encodeURIComponent(a)}&to=${B.lon},${B.lat},${encodeURIComponent(b)}&mode=car&src=chatgpt`;
   amapLinks.push(amap);
-  segments.push({from:a,to:b,day,distKm:guess,A,B,kStart:0,kEnd:0});
+  segments.push({from:a,to:b,day,distKm,A,B,kStart:0,kEnd:0});
 }
 
-// K 里程（成都K0累计）
+// K 里程累计（成都K0）
 function recomputeKilometers(){
   let cum=0;
   segments.forEach(seg=>{ seg.kStart=cum; seg.kEnd=cum+(parseInt(seg.distKm)||0); cum=seg.kEnd; });
@@ -147,15 +152,15 @@ function recomputeKilometers(){
   setTotals(total, Math.max(0,total-checked));
 }
 
-// 绘制与文本框（导航按钮同色）
+// 绘制与文本框（按钮同色）
 const polyRefs=[], labelRefs=[], checkRefs=[];
 segments.forEach((seg,idx)=>{
   const color=dayColors[seg.day]; const bg=rgba(color,0.55);
   const line=L.polyline([[seg.A.lat,seg.A.lon],[seg.B.lat,seg.B.lon]],{color,weight:5,opacity:0.95}).addTo(map);
   polyRefs[idx]=line;
   const mid=[(seg.A.lat+seg.B.lat)/2,(seg.A.lon+seg.B.lon)/2];
-  const navStyle=`color:${'#fff'}; background:${rgba(color,0.18)}; border:1px solid ${color};`;
-  const html=`<div class="chip dynfs" id="seglabel_${idx}" style="background:${bg} !important;color:#fff !important;border-color:${color} !important;">
+  const navStyle=`color:#fff; background:${rgba(color,0.18)}; border:1px solid ${color};`;
+  const html=`<div class="chip dynfs" id="seglabel_${idx}" style="background:${bg} !重要;color:#fff !重要;border-color:${color} !重要;">
       <input type="checkbox" class="segchk" id="segcb_${idx}" data-idx="${idx}" data-dist="${seg.distKm}" />
       <label for="segcb_${idx}" class="slabel" data-idx="${idx}" style="margin:0;cursor:pointer;">
         ${seg.day} · ${seg.from} → ${seg.to} · <span class="kspan" data-idx="${idx}">K0–K0</span>（<span class="kmv" data-idx="${idx}">${seg.distKm}</span> km）
@@ -168,7 +173,7 @@ segments.forEach((seg,idx)=>{
 });
 
 // 顺序/持久化/重置
-const STORAGE_KEY="chuan_gan_route_checked_indices_v18";
+const STORAGE_KEY="chuan_gan_route_checked_indices_v19";
 function save(){ const arr=checkRefs.map(el=> el&&el.checked?1:0); localStorage.setItem(STORAGE_KEY,JSON.stringify(arr)); }
 function load(){ try{ const raw=localStorage.getItem(STORAGE_KEY); if(!raw) return null; const arr=JSON.parse(raw); return Array.isArray(arr)?arr.map(v=>v?1:0):null; }catch(e){ return null; } }
 function seqRules(){
@@ -244,7 +249,7 @@ document.getElementById('locBtn').addEventListener('click', ()=>{
 </body>
 </html>
 """
-path = "/mnt/data/川甘环线-K0累计里程-同色导航按钮-无校准.html"
+path = "/mnt/data/川甘环线-K0累计-同色导航-图注修正里程.html"
 with open(path, "w", encoding="utf-8") as f:
     f.write(html)
 path
