@@ -1,10 +1,9 @@
 
-html = r"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>川甘环线 </title>
+<title>川甘环线</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <style>
   :root { --chip-radius: 10px; --chip-shadow: 0 2px 6px rgba(0,0,0,0.18); --chip-font: 12px; --chip-weight: 800;
@@ -37,7 +36,7 @@ html = r"""<!DOCTYPE html>
 <div id="map"></div>
 <div class="overlay">
   <div class="row">
-    <div style="font-weight:800;font-size:14px;">总里程：<span id="total_km">--</span> km</div>
+    <div style="font-weight:800;font-size:14px;">总里程（K0 起）：<span id="total_km">--</span> km</div>
     <div style="font-weight:700;">剩余：<span id="remain_km">--</span> km</div>
     <button id="resetBtn" class="btn" title="重置所有勾选">重置</button>
   </div>
@@ -91,14 +90,16 @@ const points = [
   ["巴郎山",30.889,102.869,"D8",4460],
   ["成都（终）",30.658,104.064,"D8",500]
 ];
-const order = ["成都","松潘","川主寺镇","九寨沟","神仙池","迭部","扎尕那","洛克之路","米拉日巴佛阁","合作","夏河","拉卜楞寺","桑科草原","碌曲","郎木寺","唐克","阿坝","各莫寺","莲宝叶则","阿坝（返）","观音桥","玉科草原","党岭","丹巴","巴郎山","成都（终）"];
+
+// 新的路线顺序：D1 合并为 成都→九寨沟（松潘/川主寺仅作为点）
+const order = ["成都","九寨沟","神仙池","迭部","扎尕那","洛克之路","米拉日巴佛阁","合作","夏河","拉卜楞寺","桑科草原","碌曲","郎木寺","唐克","阿坝","各莫寺","莲宝叶则","阿坝（返）","观音桥","玉科草原","党岭","丹巴","巴郎山","成都（终）"];
 const pt = {}; points.forEach(([n,lat,lon,day,elev])=>pt[n]={lat,lon,day,elev});
 
-// 图注公里数覆盖（与相邻段一一对应）≈ 2224 km
-const overrideKm = [320,17,75,70,200,35,8,120,2,63,2,12,65,85,120,120,35,90,95,200,60,110,50,95,175];
+// 覆盖的图注公里数（与 order 相邻段一一对应，共23段）
+// 合并前三段：成都→九寨沟 = 320+17+75 = 412
+const overrideKm = [412,70,200,35,8,120,2,63,2,12,65,85,120,120,35,90,95,200,60,110,50,95,175];
 
-// 初始化地图（高德底图）
-const map=L.map('map',{ zoomControl:true }).setView([30.658,104.064],6);
+const map=L.map('map',{ zoomControl:true }).setView([30.658,104.064],7);
 L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=7&x={x}&y={y}&z={z}', {
   subdomains: "1234",
   attribution: "高德地图"
@@ -136,23 +137,22 @@ function flagIcon(){
 const segments=[], amapLinks=[];
 for(let i=0;i<order.length-1;i++){
   const a=order[i], b=order[i+1]; const A=pt[a], B=pt[b];
-  const distKm = (overrideKm[i]!==undefined && overrideKm[i]>0) ? overrideKm[i] : 0;
-  const day=A.day;
+  const day=A.day; const distKm = (overrideKm[i]!==undefined && overrideKm[i]>0) ? overrideKm[i] : 0;
   const amap=`https://uri.amap.com/navigation?from=${A.lon},${A.lat},${encodeURIComponent(a)}&to=${B.lon},${B.lat},${encodeURIComponent(b)}&mode=car&src=chatgpt`;
   amapLinks.push(amap);
   segments.push({from:a,to:b,day,distKm,A,B,kStart:0,kEnd:0});
 }
 
-// K 里程（起点K0累计）
+// 里程累计（起点K0）
 function recomputeKilometers(){
   let cum=0;
   segments.forEach(seg=>{ seg.kStart=cum; seg.kEnd=cum+(parseInt(seg.distKm)||0); cum=seg.kEnd; });
   const total=segments.length?segments[segments.length-1].kEnd:0;
-  const checked=checkRefs.reduce((s,el)=> s+(el&&el.checked?(parseInt(el.getAttribute('data-dist'))||0):0),0);
-  setTotals(total, Math.max(0,total-checked));
+  const checkedSum = checkRefs.reduce((s,el)=> s + (el && el.checked ? (parseInt(el.getAttribute('data-dist'))||0) : 0), 0);
+  setTotals(total, Math.max(0, total - checkedSum));
 }
 
-// 绘制与文本框（按钮同色）
+// 绘制与文本框
 const polyRefs=[], labelRefs=[], checkRefs=[];
 segments.forEach((seg,idx)=>{
   const color=dayColors[seg.day]; const bg=rgba(color,0.55);
@@ -173,7 +173,7 @@ segments.forEach((seg,idx)=>{
 });
 
 // 顺序/持久化/重置
-const STORAGE_KEY="chuan_gan_route_checked_indices_v20";
+const STORAGE_KEY="chuan_gan_route_checked_indices_v21";
 function save(){ const arr=checkRefs.map(el=> el&&el.checked?1:0); localStorage.setItem(STORAGE_KEY,JSON.stringify(arr)); }
 function load(){ try{ const raw=localStorage.getItem(STORAGE_KEY); if(!raw) return null; const arr=JSON.parse(raw); return Array.isArray(arr)?arr.map(v=>v?1:0):null; }catch(e){ return null; } }
 function seqRules(){
@@ -181,24 +181,6 @@ function seqRules(){
   let firstUnchecked=checkRefs.findIndex(el=> el && !el.checked);
   if(firstUnchecked===-1) firstUnchecked=checkRefs.length-1;
   if(checkRefs[firstUnchecked]) checkRefs[firstUnchecked].disabled=false;
-}
-function visuals(){
-  let checked=0;
-  checkRefs.forEach((el,i)=>{
-    if(!el) return; const dist=parseInt(el.getAttribute('data-dist')||'0',10);
-    const poly=polyRefs[i], m=labelRefs[i];
-    if(el.checked){ checked+=dist; if(poly&&poly._path){ poly._path.style.filter="saturate(35%) brightness(0.95)"; poly._path.style.opacity="0.45"; }
-      if(m){ const nd=m.getElement(); if(nd) nd.classList.add('dimmed'); } }
-    else { if(poly&&poly._path){ poly._path.style.filter=""; poly._path.style.opacity="0.95"; }
-      if(m){ const nd=m.getElement(); if(nd) nd.classList.remove('dimmed'); } }
-  });
-  const total = segments.length? segments[segments.length-1].kEnd : 0;
-  setTotals(total, Math.max(0,total-checked));
-}
-function restore(){
-  const arr=load(); if(!arr){ seqRules(); recomputeKilometers(); applyKTextAll(); visuals(); return; }
-  let last=-1; for(let i=0;i<arr.length;i++){ if(arr[i]===1){ if(i===last+1){ if(checkRefs[i]) checkRefs[i].checked=true; last=i; } else { break; } } else { break; } }
-  seqRules(); recomputeKilometers(); applyKTextAll(); visuals();
 }
 function applyKTextAll(){
   segments.forEach((seg,idx)=>{
@@ -210,6 +192,53 @@ function applyKTextAll(){
     if(cb){ cb.setAttribute('data-dist', String(seg.distKm)); }
   });
 }
+function restore(){
+  const arr=load();
+  if(arr){
+    let last=-1;
+    for(let i=0;i<arr.length;i++){
+      if(arr[i]===1){
+        if(i===last+1){ if(checkRefs[i]) checkRefs[i].checked=true; last=i; } else { break; }
+      } else { break; }
+    }
+  }
+  seqRules(); recomputeKilometers(); applyKTextAll(); visuals();
+}
+function visuals(){
+  checkRefs.forEach((el,i)=>{
+    const poly=polyRefs[i], m=labelRefs[i];
+    if(el && el.checked){
+      if(poly&&poly._path){ poly._path.style.filter="saturate(35%) brightness(0.95)"; poly._path.style.opacity="0.45"; }
+      if(m){ const nd=m.getElement(); if(nd) nd.classList.add('dimmed'); }
+    }else{
+      if(poly&&poly._path){ poly._path.style.filter=""; poly._path.style.opacity="0.95"; }
+      if(m){ const nd=m.getElement(); if(nd) nd.classList.remove('dimmed'); }
+    }
+  });
+  // 每次视觉刷新也同步剩余里程，避免某些浏览器事件顺序差异
+  const total=segments.length?segments[segments.length-1].kEnd:0;
+  const checkedSum=checkRefs.reduce((s,el)=> s+(el && el.checked ? (parseInt(el.getAttribute('data-dist'))||0):0),0);
+  setTotals(total, Math.max(0,total-checkedSum));
+}
+
+document.addEventListener('change', e=>{
+  const t=e.target;
+  if(t && t.classList.contains('segchk')){
+    const idx=parseInt(t.getAttribute('data-idx'),10);
+    const prev=idx-1;
+    if(prev>=0 && (!checkRefs[prev] || !checkRefs[prev].checked)){
+      t.checked=false; return;
+    }
+    if(!t.checked){
+      for(let j=idx+1;j<checkRefs.length;j++){ if(checkRefs[j]) checkRefs[j].checked=false; }
+    }
+    seqRules(); visuals(); save();
+  }
+});
+document.getElementById('resetBtn').addEventListener('click',()=>{
+  checkRefs.forEach(el=>{ if(el) el.checked=false; }); localStorage.removeItem(STORAGE_KEY);
+  seqRules(); visuals();
+});
 
 // 缩放联动文字
 function zoomFonts(){
@@ -220,14 +249,14 @@ function zoomFonts(){
 }
 map.on('zoomend', zoomFonts);
 
-// 地点与起点旗帜
-const placedPts=[];
+// 地点 & 起点旗帜
 points.forEach(([n,lat,lon,day,elev])=> addPointLabel(n,lat,lon,day,elev));
-const startName=points.find(p=>p[3]==="D1")[0]; const s=pt[startName];
+const startName=points.find(p=>p[0]==="成都"); const s=pt[startName[0]];
 L.marker([s.lat,s.lon],{icon:flagIcon()}).addTo(map);
+
 zoomFonts(); restore();
 
-// 单次“定位到我”（仅平移）
+// 定位到我（仅平移）
 let meMarker=null, meCircle=null;
 document.getElementById('locBtn').addEventListener('click', ()=>{
   if(!navigator.geolocation){ alert('当前浏览器不支持定位'); return; }
@@ -250,7 +279,7 @@ document.getElementById('locBtn').addEventListener('click', ()=>{
 </body>
 </html>
 """
-path = "/mnt/data/川甘环线-最终版-K0累计-图注里程-高德底图.html"
+path = "/mnt/data/川甘环线-D1直达九寨-剩余里程修正-高德底图.html"
 with open(path, "w", encoding="utf-8") as f:
     f.write(html)
 path
