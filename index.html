@@ -1,9 +1,9 @@
-
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>川甘环线 </title>
+<title>川甘环线（交互图例·可编辑按日路线·高德底图 · “-”分隔）</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <style>
   :root { --chip-radius: 10px; --chip-shadow: 0 2px 6px rgba(0,0,0,0.18); --chip-font: 12px; --chip-weight: 800;
@@ -40,6 +40,7 @@
 </head>
 <body>
 <div id="map"></div>
+
 <div class="overlay">
   <div class="row">
     <div style="font-weight:800;font-size:14px;">总里程：<span id="total_km">--</span> km</div>
@@ -47,11 +48,12 @@
     <button id="resetBtn" class="btn" title="重置所有勾选">重置</button>
   </div>
 </div>
+
 <div class="legend" id="legend">
   <div style="font-weight:700;margin-bottom:6px;">按日聚焦（点击按钮高亮当日）</div>
   <!-- rows injected by JS -->
   <div class="helper">
-    可编辑路线：点右侧<strong>编辑</strong>，输入如“成都→九寨沟”或“九寨沟→神仙池→迭部”。<br/>
+    可编辑路线：点右侧<strong>编辑</strong>，输入如“成都-九寨沟”或“九寨沟-神仙池-迭部”。<br/>
     可用地名：<span id="namesList"></span>
   </div>
 </div>
@@ -68,7 +70,7 @@ function haversineKm(lat1,lon1,lat2,lon2){ const R=6371, dLat=(lat2-lat1)*Math.P
   const a=Math.sin(dLat/2)**2+Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLon/2)**2; return 2*R*Math.atan2(Math.sqrt(a),Math.sqrt(1-a)); }
 function roadKmGuess(A,B){ return Math.round(haversineKm(A.lat,A.lon,B.lat,B.lon)*1.55); }
 
-// —— 地点清单 ——
+// —— 地点清单（只包含会用到的点） ——
 const pointsRaw = [
   ["成都",30.658,104.064,"D1",500],
   ["九寨沟",33.20000,103.90000,"D1",2000],
@@ -107,7 +109,7 @@ let daySeqs = {
   D8: ["丹巴","巴郎山","成都（终）"]
 };
 
-// —— 图注覆盖公里数（默认用），若某日被编辑，则该日的段改用 roadKmGuess ——
+// —— 图注覆盖公里数（默认用），若某日被编辑，则该日段用 roadKmGuess ——
 const overrideKmDefault = {
   "成都→九寨沟": 412,
   "九寨沟→神仙池": 70, "神仙池→迭部":200,
@@ -121,7 +123,7 @@ const overrideKmDefault = {
 
 // —— 状态容器 ——
 let map, segments=[], amapLinks=[], polyRefs=[], labelRefs=[], checkRefs=[], pointMarkers=[], pointMarkersByDay={}, pointLookup={};
-let STORAGE_KEY="chuan_gan_editable_v1";
+let STORAGE_KEY="chuan_gan_editable_dash_v1";
 
 function initMap(){
   map=L.map('map',{ zoomControl:true }).setView([30.658,104.064],7);
@@ -154,7 +156,7 @@ function concatOrderFromDaySeqs(){
 
 function computeOverrideKm(a,b,dayEditedSet){
   const key=`${a}→${b}`;
-  if(dayEditedSet && dayEditedSet.has(pointLookup[b]?.day)) return null; // edited day's segments use guess
+  if(dayEditedSet && dayEditedSet.has(pointLookup[b]?.day)) return null; // 被编辑日的段不使用覆盖值
   if(overrideKmDefault[key]!=null) return overrideKmDefault[key];
   return null;
 }
@@ -178,17 +180,17 @@ function buildAll(){
   clearLayers();
   const order = concatOrderFromDaySeqs();
 
-  // 仅绘制在 order 中出现的点（满足 #2）
+  // 仅绘制在 order 中出现的点
   const uniq = Array.from(new Set(order));
   uniq.forEach(addPointMarker);
 
   // 段与文本框
-  const dayEditedSet = restoredEdits();
+  const dayEditedSet = new Set(restoredEdits());
   for(let i=0;i<order.length-1;i++){
     const a=order[i], b=order[i+1]; const A=pointLookup[a], B=pointLookup[b];
     if(!A||!B) continue;
     const day=B.day;
-    const distOverride = computeOverrideKm(a,b, new Set(dayEditedSet));
+    const distOverride = computeOverrideKm(a,b, dayEditedSet);
     const distKm = distOverride!=null ? distOverride : roadKmGuess(A,B);
     const amap=`https://uri.amap.com/navigation?from=${A.lon},${A.lat},${encodeURIComponent(a)}&to=${B.lon},${B.lat},${encodeURIComponent(b)}&mode=car&src=chatgpt`;
     amapLinks.push(amap);
@@ -225,7 +227,6 @@ function updateTotals(){
 function restoreChecks(){
   const save = JSON.parse(localStorage.getItem(STORAGE_KEY)||'{"checks":[]}');
   const arr = Array.isArray(save.checks)?save.checks:[];
-  // 只能恢复到连续的最大前缀
   let last=-1;
   for(let i=0;i<Math.min(arr.length, checkRefs.length); i++){
     if(arr[i]===1){
@@ -249,7 +250,6 @@ function applySeqRules(){
 }
 
 function refreshVisuals(){
-  // 已勾选降饱和
   checkRefs.forEach((el,i)=>{
     const poly=polyRefs[i], lab=labelRefs[i];
     if(el && el.checked){
@@ -314,21 +314,19 @@ document.getElementById('locBtn').addEventListener('click', ()=>{
   }, err=>{ alert('定位失败：'+err.message); }, {enableHighAccuracy:true, timeout:12000, maximumAge:60000});
 });
 
-// —— 交互图例：聚焦 + 编辑 ——
+// —— 交互图例：聚焦 + 编辑（使用“-”分隔） ——
 const daysOrder = ["D1","D2","D3","D4","D5","D6","D7","D8"];
 const dayFocus = { current: null };
 
 function buildLegend(){
   const legendEl=document.getElementById('legend');
-  // 清旧 rows
   legendEl.querySelectorAll('.row').forEach(n=> n.remove());
-  // 生成 rows
   daysOrder.forEach(d=>{
     const row=document.createElement('div'); row.className='row';
     const btn=document.createElement('div'); btn.className='btn-day'; btn.textContent=d;
     btn.style.background = rgba(dayColors[d],0.15);
     btn.style.color = '#000'; btn.style.borderColor = dayColors[d]; btn.dataset.day = d;
-    const text=document.createElement('div'); text.className='route-text'; text.textContent = (daySeqs[d]||[]).join("→");
+    const text=document.createElement('div'); text.className='route-text'; text.textContent = (daySeqs[d]||[]).join("-");
     const edit=document.createElement('div'); edit.className='edit'; edit.textContent='编辑'; edit.dataset.day=d;
     row.appendChild(btn); row.appendChild(text); row.appendChild(edit);
     legendEl.insertBefore(row, legendEl.querySelector('.helper'));
@@ -339,14 +337,12 @@ function buildLegend(){
 }
 
 function setDayVisibility(focusDay){
-  // 段与标签
   segments.forEach((seg,idx)=>{
     const isFocus = !focusDay || seg.day===focusDay;
     const poly=polyRefs[idx], lab=labelRefs[idx];
     if(poly && poly._path){ poly._path.classList.toggle('muted', !isFocus); }
     if(lab){ const nd=lab.getElement(); if(nd) nd.classList.toggle('muted', !isFocus); }
   });
-  // 地点标签（满足 #3）
   daysOrder.forEach(d=>{
     const list=pointMarkersByDay[d]||[];
     list.forEach(m=>{ const nd=m.getElement(); if(nd) nd.classList.toggle('muted', !!focusDay && d!==focusDay); });
@@ -366,23 +362,23 @@ function toggleFocus(day, btnEl){
   }
 }
 
-// —— 编辑当日序列 ——
 function editDay(day){
-  const cur = (daySeqs[day]||[]).join('→');
-  const tip = `请输入 ${day} 的路线（使用下方“可用地名”，用→分隔）。\n当前：${cur}\n示例：九寨沟→神仙池→迭部`;
+  const cur = (daySeqs[day]||[]).join('-');
+  const tip = `请输入 ${day} 的路线（使用下方“可用地名”，用 - 分隔）。\n当前：${cur}\n示例：九寨沟-神仙池-迭部`;
   const val = prompt(tip, cur);
   if(val==null) return;
-  const names = val.split('→').map(s=>s.trim()).filter(Boolean);
+  const names = val.split('-').map(s=>s.trim()).filter(Boolean);
   if(names.length<2){ alert('至少需要起点和终点'); return; }
   for(const n of names){ if(!pointLookup[n]){ alert('不存在的地名：'+n); return; } }
   daySeqs[day]=names;
+
   // 保存编辑标记
   const obj=JSON.parse(localStorage.getItem(STORAGE_KEY)||'{}');
   obj.edits = obj.edits || {}; obj.edits[day]=names; localStorage.setItem(STORAGE_KEY, JSON.stringify(obj));
-  // 重建
+
+  // 重建并尽量恢复已勾选前缀
   const prevChecks = checkRefs.map(el=> el && el.checked ? 1:0);
   buildAll();
-  // 恢复尽可能多的前缀勾选
   const m = Math.min(prevChecks.length, checkRefs.length);
   for(let i=0;i<m;i++){
     if(prevChecks[i]===1){
@@ -399,12 +395,10 @@ function restoredEdits(){
 }
 
 // —— 启动 ——
-initMap(); buildLookup(); restoredEdits(); buildAll(); buildLegend();
+function init(){
+  initMap(); buildLookup(); restoredEdits(); buildAll(); buildLegend();
+}
+init();
 </script>
 </body>
 </html>
-"""
-path = "/mnt/data/川甘环线-交互图例可编辑-高德底图.html"
-with open(path, "w", encoding="utf-8") as f:
-    f.write(html)
-path
