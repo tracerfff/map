@@ -3,15 +3,18 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>川甘环线</title>
+<title>川甘环线 </title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <style>
   :root { --chip-radius: 10px; --chip-shadow: 0 2px 6px rgba(0,0,0,0.18); --chip-font: 12px; --chip-weight: 800;
           --sysfont: system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,"Noto Sans","Liberation Sans",sans-serif; }
   html, body, #map { height: 100%; margin: 0; font-family: var(--sysfont); }
   .legend { position: absolute; right: 10px; top: 10px; z-index: 1001; background: rgba(255,255,255,0.95);
-            padding: 8px 10px; border:1px solid #999; border-radius:10px; font-size: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.15); }
-  .legend .row { display:flex; align-items:center; gap:8px; margin:3px 0; } .legend .swatch { width:14px; height:14px; border-radius:3px; border:1px solid #666; }
+            padding: 8px 10px; border:1px solid #999; border-radius:10px; font-size: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.15); min-width: 220px; }
+  .legend .row { display:flex; align-items:center; gap:8px; margin:4px 0; }
+  .legend .btn-day { border:1px solid #666; border-radius:8px; font-weight:800; padding:2px 8px; cursor:pointer; user-select:none; }
+  .legend .route-text { flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:#333; }
+  .legend .btn-day.active { box-shadow: 0 0 0 2px rgba(0,0,0,0.1) inset; }
   .overlay { position: absolute; left: 10px; top: 10px; z-index: 1001; background: rgba(255,255,255,0.95);
              padding: 10px 14px; border: 1px solid #999; border-radius: 10px; font-size: 13px; box-shadow: 0 2px 6px rgba(0,0,0,0.15); }
   .overlay .row { display:flex; align-items:center; gap:10px; }
@@ -27,6 +30,7 @@
   .segchk::after { content: "✓"; position: absolute; top: -2px; left: 2px; font-size: 14px; color: #fff; opacity: 0; transform: scale(0.5); transition: all .15s ease; }
   .segchk:checked { background: rgba(0,0,0,0.3); } .segchk:checked::after { opacity: 1; transform: scale(1); }
   .dimmed { filter: saturate(35%) brightness(0.95); opacity: 0.5; }
+  .muted { filter: saturate(20%) brightness(0.9); opacity: 0.35; }
   .right-controls { position:absolute; right:10px; bottom:10px; z-index:1002; display:flex; gap:10px; flex-direction:column; align-items:flex-end; }
   .btn { background:#111; color:#fff; padding:10px 12px; border-radius:12px; border:1px solid #333; cursor:pointer; font-weight:800; font-size:12px; box-shadow:0 2px 6px rgba(0,0,0,.2); }
   .navbtn { display:inline-flex; align-items:center; gap:4px; padding:4px 8px; border-radius:8px; text-decoration:none; font-weight:800; font-size:11px; }
@@ -41,16 +45,9 @@
     <button id="resetBtn" class="btn" title="重置所有勾选">重置</button>
   </div>
 </div>
-<div class="legend">
-  <div style="font-weight:700;margin-bottom:4px;">D1–D8 图例</div>
-  <div class="row"><span class="swatch" style="background:#d62728"></span> D1</div>
-  <div class="row"><span class="swatch" style="background:#1f77b4"></span> D2</div>
-  <div class="row"><span class="swatch" style="background:#2ca02c"></span> D3</div>
-  <div class="row"><span class="swatch" style="background:#ff7f0e"></span> D4</div>
-  <div class="row"><span class="swatch" style="background:#9467bd"></span> D5</div>
-  <div class="row"><span class="swatch" style="background:#8c564b"></span> D6</div>
-  <div class="row"><span class="swatch" style="background:#e377c2"></span> D7</div>
-  <div class="row"><span class="swatch" style="background:#7f7f7f"></span> D8</div>
+<div class="legend" id="legend">
+  <div style="font-weight:700;margin-bottom:4px;">按日聚焦（点击高亮当日）</div>
+  <!-- rows injected by JS -->
 </div>
 
 <div class="right-controls">
@@ -91,14 +88,14 @@ const points = [
   ["成都（终）",30.658,104.064,"D8",500]
 ];
 
-// 新的路线顺序：D1 合并为 成都→九寨沟（松潘/川主寺仅作为点）
+// 路线顺序：D1 合并 成都→九寨沟
 const order = ["成都","九寨沟","神仙池","迭部","扎尕那","洛克之路","米拉日巴佛阁","合作","夏河","拉卜楞寺","桑科草原","碌曲","郎木寺","唐克","阿坝","各莫寺","莲宝叶则","阿坝（返）","观音桥","玉科草原","党岭","丹巴","巴郎山","成都（终）"];
 const pt = {}; points.forEach(([n,lat,lon,day,elev])=>pt[n]={lat,lon,day,elev});
 
-// 覆盖的图注公里数（与 order 相邻段一一对应，共23段）
-// 合并前三段：成都→九寨沟 = 320+17+75 = 412
+// 图注公里数覆盖（与相邻段一一对应）≈ 2224 km；D1 合并 412 km
 const overrideKm = [412,70,200,35,8,120,2,63,2,12,65,85,120,120,35,90,95,200,60,110,50,95,175];
 
+// 初始化地图（高德底图）
 const map=L.map('map',{ zoomControl:true }).setView([30.658,104.064],7);
 L.tileLayer('https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=7&x={x}&y={y}&z={z}', {
   subdomains: "1234",
@@ -133,14 +130,27 @@ function flagIcon(){
   return L.divIcon({className:'', html:svg, iconSize:[22,22], iconAnchor:[11,20]});
 }
 
-// 构建段（用 overrideKm）与导航链接
-const segments=[], amapLinks=[];
+// 构建段（注意：颜色用 **目的地的 day（B.day）** 来判定，跨日段归入下一日）
+const segments=[], amapLinks=[], dayGroups = {D1:[],D2:[],D3:[],D4:[],D5:[],D6:[],D7:[],D8:[]};
 for(let i=0;i<order.length-1;i++){
   const a=order[i], b=order[i+1]; const A=pt[a], B=pt[b];
-  const day=A.day; const distKm = (overrideKm[i]!==undefined && overrideKm[i]>0) ? overrideKm[i] : 0;
+  const distKm = (overrideKm[i]!==undefined && overrideKm[i]>0) ? overrideKm[i] : 0;
+  const day = B.day; // 用目的地 day
   const amap=`https://uri.amap.com/navigation?from=${A.lon},${A.lat},${encodeURIComponent(a)}&to=${B.lon},${B.lat},${encodeURIComponent(b)}&mode=car&src=chatgpt`;
   amapLinks.push(amap);
-  segments.push({from:a,to:b,day,distKm,A,B,kStart:0,kEnd:0});
+  const seg = {from:a,to:b,day,distKm,A,B,kStart:0,kEnd:0};
+  segments.push(seg);
+  dayGroups[day].push(seg);
+}
+
+// 生成每个 D# 的“路线文字”如 "成都→九寨沟"
+function routeTextOfDay(day){
+  const group = dayGroups[day]; if(!group || group.length===0) return "";
+  const names=[group[0].from]; group.forEach(s=> names.push(s.to));
+  // 去重连续相同
+  const simplified=[names[0]];
+  for(let i=1;i<names.length;i++){ if(names[i]!==simplified[simplified.length-1]) simplified.push(names[i]); }
+  return simplified.join("→");
 }
 
 // 里程累计（起点K0）
@@ -173,7 +183,7 @@ segments.forEach((seg,idx)=>{
 });
 
 // 顺序/持久化/重置
-const STORAGE_KEY="chuan_gan_route_checked_indices_v21";
+const STORAGE_KEY="chuan_gan_route_checked_indices_v22";
 function save(){ const arr=checkRefs.map(el=> el&&el.checked?1:0); localStorage.setItem(STORAGE_KEY,JSON.stringify(arr)); }
 function load(){ try{ const raw=localStorage.getItem(STORAGE_KEY); if(!raw) return null; const arr=JSON.parse(raw); return Array.isArray(arr)?arr.map(v=>v?1:0):null; }catch(e){ return null; } }
 function seqRules(){
@@ -215,7 +225,6 @@ function visuals(){
       if(m){ const nd=m.getElement(); if(nd) nd.classList.remove('dimmed'); }
     }
   });
-  // 每次视觉刷新也同步剩余里程，避免某些浏览器事件顺序差异
   const total=segments.length?segments[segments.length-1].kEnd:0;
   const checkedSum=checkRefs.reduce((s,el)=> s+(el && el.checked ? (parseInt(el.getAttribute('data-dist'))||0):0),0);
   setTotals(total, Math.max(0,total-checkedSum));
@@ -275,11 +284,63 @@ document.getElementById('locBtn').addEventListener('click', ()=>{
     alert('定位失败：'+err.message);
   }, {enableHighAccuracy:true, timeout:12000, maximumAge:60000});
 });
+
+// —— 交互图例 ——
+const legendEl = document.getElementById('legend');
+const daysOrder = ["D1","D2","D3","D4","D5","D6","D7","D8"];
+const dayFocus = { current: null };
+
+function buildLegend(){
+  daysOrder.forEach(d=>{
+    const row=document.createElement('div'); row.className='row';
+    const btn=document.createElement('div'); btn.className='btn-day'; btn.textContent=d;
+    btn.style.background = rgba(dayColors[d],0.15);
+    btn.style.color = '#000';
+    btn.style.borderColor = dayColors[d];
+    btn.dataset.day = d;
+    const text=document.createElement('div'); text.className='route-text'; text.textContent = routeTextOfDay(d);
+    row.appendChild(btn); row.appendChild(text);
+    legendEl.appendChild(row);
+    btn.addEventListener('click', ()=> toggleFocus(d, btn));
+  });
+}
+
+function toggleFocus(day, btnEl){
+  if(dayFocus.current === day){
+    dayFocus.current = null;
+    document.querySelectorAll('.btn-day').forEach(b=> b.classList.remove('active'));
+    setDayVisibility(null);
+  }else{
+    dayFocus.current = day;
+    document.querySelectorAll('.btn-day').forEach(b=> b.classList.remove('active'));
+    if(btnEl) btnEl.classList.add('active');
+    setDayVisibility(day);
+  }
+}
+
+function setDayVisibility(focusDay){
+  // dim non-focused segments/labels; restore when null
+  segments.forEach((seg,idx)=>{
+    const poly=polyRefs[idx], lab=labelRefs[idx];
+    const isFocus = !focusDay || seg.day===focusDay;
+    if(poly && poly._path){
+      poly._path.classList.remove('muted');
+      if(!isFocus) poly._path.classList.add('muted');
+    }
+    const dom = lab && lab.getElement && lab.getElement();
+    if(dom){
+      dom.classList.remove('muted');
+      if(!isFocus) dom.classList.add('muted');
+    }
+  });
+}
+
+buildLegend();
 </script>
 </body>
 </html>
 """
-path = "/mnt/data/川甘环线-D1直达九寨-剩余里程修正-高德底图.html"
+path = "/mnt/data/川甘环线-交互图例-按日聚焦-路线文字-高德.html"
 with open(path, "w", encoding="utf-8") as f:
     f.write(html)
 path
